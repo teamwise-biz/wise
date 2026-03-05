@@ -1,0 +1,1 @@
+const axios=require('axios');const cheerio=require('cheerio');axios.get('https://dometopia.com/goods/category?cate=0001').then(r=>{const $=cheerio.load(r.data);const links=new Set();a[href^=\"/goods/view?no=\"].each((i,el)=>links.add('https://dometopia.com'+.attr('href')));console.log(Array.from(links).slice(0,5));}).catch(e=>console.log(e.message))

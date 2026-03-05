@@ -1,0 +1,231 @@
+:root {
+  font-family: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, system-ui, Roboto, 'Helvetica Neue', 'Segoe UI', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', sans-serif;
+  line-height: 1.6;
+  font-weight: 400;
+
+  color-scheme: dark;
+  color: rgba(255, 255, 255, 0.92);
+  background-color: var(--color-surface-0);
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* Premium Layered Dark Theme Colors - Deeper Navy Base */
+  --color-surface-0: #060913;
+  /* Deepest void background */
+  --color-surface-1: #0B1121;
+  /* Main app background */
+  --color-surface-2: #151E32;
+  /* Elevated panels */
+  --color-surface-3: #1E2B45;
+  /* Higher elevated elements / hover */
+
+  --color-primary: #4F46E5;
+  /* Deep Indigo */
+  --color-primary-hover: #6366F1;
+  --color-secondary: #8B5CF6;
+  /* Violet */
+  --color-secondary-hover: #A855F7;
+  --color-success: #10B981;
+  /* Emerald */
+  --color-success-hover: #059669;
+  --color-danger: #EF4444;
+  /* Red */
+  --color-danger-hover: #DC2626;
+  --color-warning: #F59E0B;
+  /* Amber */
+  --color-info: #0EA5E9;
+  /* Sky Blue */
+
+  --color-border: rgba(255, 255, 255, 0.06);
+  --color-border-hover: rgba(255, 255, 255, 0.12);
+  --color-bg-input: rgba(0, 0, 0, 0.25);
+
+  /* Advanced Glassmorphism */
+  --glass-bg: rgba(21, 30, 50, 0.4);
+  --glass-border: 1px solid rgba(255, 255, 255, 0.04);
+  --glass-border-top: 1px solid rgba(255, 255, 255, 0.1);
+  /* Light catch */
+  --glass-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.6);
+  --glass-blur: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+
+  /* Transitions */
+  --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-normal: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-spring: 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+body {
+  margin: 0;
+  display: flex;
+  min-height: 100vh;
+  /* Dynamic Mesh-like background */
+  background:
+    radial-gradient(circle at 15% 50%, rgba(79, 70, 229, 0.08), transparent 25%),
+    radial-gradient(circle at 85% 30%, rgba(139, 92, 246, 0.08), transparent 25%),
+    var(--color-surface-0);
+  background-attachment: fixed;
+  overflow: hidden;
+  letter-spacing: -0.015em;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  margin-top: 0;
+  color: #f8fafc;
+}
+
+input,
+button {
+  font-family: inherit;
+  font-size: 14px;
+}
+
+input {
+  background-color: var(--color-bg-input);
+  border: 1px solid var(--color-border);
+  color: #fff;
+  padding: 12px 16px;
+  border-radius: 8px;
+  transition: var(--transition-fast);
+  outline: none;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+input::placeholder {
+  color: #64748b;
+}
+
+input:focus {
+  border-color: var(--color-primary);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1), 0 0 0 3px rgba(99, 102, 241, 0.2);
+  background-color: rgba(15, 23, 42, 0.8);
+}
+
+button {
+  padding: 12px 20px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-weight: 600;
+  transition: var(--transition-fast);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Subtle glow behind buttons */
+button::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  pointer-events: none;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
+  filter: grayscale(0.5);
+}
+
+button.primary {
+  background: linear-gradient(135deg, var(--color-primary), #818cf8);
+  color: white;
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.3);
+}
+
+button.primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, var(--color-primary-hover), var(--color-primary));
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(99, 102, 241, 0.4);
+}
+
+button.success {
+  background: linear-gradient(135deg, var(--color-success), #34d399);
+  color: white;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.3);
+}
+
+button.success:hover:not(:disabled) {
+  background: linear-gradient(135deg, var(--color-success-hover), var(--color-success));
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(16, 185, 129, 0.4);
+}
+
+button.secondary {
+  background: linear-gradient(135deg, var(--color-secondary), #c084fc);
+  color: white;
+  box-shadow: 0 4px 14px rgba(168, 85, 247, 0.3);
+}
+
+button.secondary:hover:not(:disabled) {
+  background: linear-gradient(135deg, var(--color-secondary-hover), var(--color-secondary));
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(168, 85, 247, 0.4);
+}
+
+button.danger {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--color-danger);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+button.danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: var(--color-danger);
+  transform: translateY(-1px);
+}
+
+button.ghost {
+  background: rgba(255, 255, 255, 0.03);
+  color: #e2e8f0;
+  border: 1px solid var(--color-border);
+}
+
+button.ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  border-color: var(--color-border-hover);
+  transform: translateY(-1px);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}

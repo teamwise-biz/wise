@@ -1,0 +1,1 @@
+const axios=require('axios');const iconv=require('iconv-lite');const fs=require('fs');axios.get('https://dometopia.com',{responseType:'arraybuffer'}).then(r=>{let h=iconv.decode(r.data,'EUC-KR');fs.writeFileSync('dom-main.html',h);console.log('Saved to dom-main.html');}).catch(e=>console.log(e.message))
