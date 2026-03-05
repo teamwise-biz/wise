@@ -1,5 +1,4 @@
-import React from 'react';
-import { SyncStepMaster } from './SyncStepMaster';
+import React, { useState } from 'react';
 
 type SyncStatus = 'pending' | 'syncing' | 'success' | 'failed';
 
@@ -7,7 +6,7 @@ interface MarketSyncStepProps {
     sheetData: string[][];
     syncStatuses: { [rowIdx: number]: { status: SyncStatus, message: string } };
     handleReadProducts: () => Promise<void>;
-    handleSyncProducts: () => Promise<void>;
+    handleSyncProducts: (selectedMarkets: string[]) => Promise<void>;
     handleFetchSmartStoreOrders: () => Promise<void>;
     marginRate: number;
     setMarginRate: React.Dispatch<React.SetStateAction<number>>;
@@ -21,19 +20,37 @@ export const MarketSyncStep: React.FC<MarketSyncStepProps> = ({
     syncStatuses,
     handleReadProducts,
     handleSyncProducts,
-    handleFetchSmartStoreOrders,
     marginRate,
     setMarginRate,
     extraShippingCost,
     setExtraShippingCost,
-    masterSheetId
 }) => {
+    const [selectedMarkets, setSelectedMarkets] = useState<string[]>(['smartstore']);
+
+    const targetMarkets = [
+        { id: 'smartstore', label: '네이버 스마트스토어', ready: true },
+        { id: 'coupang', label: '쿠팡', ready: false },
+        { id: '11st', label: '11번가', ready: false },
+        { id: 'gmarket', label: 'G마켓', ready: false },
+        { id: 'haoreum', label: '해오름', ready: false }
+    ];
+
+    const toggleMarket = (id: string, ready: boolean) => {
+        if (!ready) {
+            alert('해당 마켓 연동은 준비 중입니다.');
+            return;
+        }
+        setSelectedMarkets(prev =>
+            prev.includes(id) ? prev.filter(m => m !== id) : [...prev, id]
+        );
+    };
+
     return (
         <div className="animate-fade-in">
             <div className="glass-panel" style={{ marginBottom: '32px' }}>
                 <div className="panel-title">🔄 상품 연동 허브</div>
                 <p style={{ color: '#cbd5e1', marginBottom: '24px', fontSize: '15px', lineHeight: '1.6' }}>
-                    구글 시트에서 미리 세팅된 데이터를 읽어오고 수익률을 지정한 후, 스마트스토어에 일괄 등록합니다.
+                    구글 시트에서 미리 세팅된 데이터를 읽어오고 수익률을 지정한 후, 다중 마켓에 일괄 등록합니다.
                 </p>
                 <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
                     <button className="secondary" onClick={handleReadProducts} style={{ flexGrow: 1, padding: '14px 24px', fontSize: '15px' }}>
@@ -47,7 +64,7 @@ export const MarketSyncStep: React.FC<MarketSyncStepProps> = ({
                     <div className="glass-panel" style={{ marginBottom: '32px' }}>
                         <div className="panel-title">💰 2. 수익률 설정 및 데이터 검토</div>
                         <p style={{ color: '#cbd5e1', marginBottom: '24px', fontSize: '14px', lineHeight: '1.6' }}>
-                            수집된 원가에 마진율과 고정 부대비용을 더해 스마트스토어 최종 판매가를 결정합니다. 아래 표에서 적용된 가격을 확인할 수 있습니다.
+                            수집된 원가에 마진율과 고정 부대비용을 더해 마켓 최종 판매가를 결정합니다.
                         </p>
 
                         <div style={{ display: 'flex', gap: '32px', flexWrap: 'wrap', marginBottom: '24px' }}>
@@ -146,35 +163,53 @@ export const MarketSyncStep: React.FC<MarketSyncStepProps> = ({
                         </div>
                     </div>
 
+                    {/* Multi-Market Selector */}
+                    <div className="glass-panel" style={{ marginBottom: '32px', textAlign: 'left', padding: '32px' }}>
+                        <h4 style={{ margin: '0 0 16px 0', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '18px' }}>
+                            <span style={{ fontSize: '24px' }}>📦</span> 3. 등록할 타겟 마켓 선택 (1:N 분배)
+                        </h4>
+                        <p style={{ color: '#64748b', marginBottom: '24px', fontSize: '14px' }}>
+                            연동할 마켓을 선택하세요. 체크된 모든 마켓으로 상품 데이터가 배포됩니다.
+                        </p>
+                        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                            {targetMarkets.map(market => (
+                                <label key={market.id} style={{
+                                    display: 'flex', alignItems: 'center', gap: '8px', padding: '14px 20px',
+                                    backgroundColor: selectedMarkets.includes(market.id) ? '#eff6ff' : '#f8fafc',
+                                    border: selectedMarkets.includes(market.id) ? '2px solid #3b82f6' : '1px solid #e2e8f0',
+                                    borderRadius: '12px', cursor: market.ready ? 'pointer' : 'not-allowed',
+                                    opacity: market.ready ? 1 : 0.6,
+                                    fontWeight: selectedMarkets.includes(market.id) ? 600 : 500,
+                                    color: selectedMarkets.includes(market.id) ? '#1e40af' : '#64748b',
+                                    transition: 'all 0.2s',
+                                    boxShadow: selectedMarkets.includes(market.id) ? '0 4px 6px rgba(59, 130, 246, 0.1)' : 'none'
+                                }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={selectedMarkets.includes(market.id)}
+                                        onChange={() => toggleMarket(market.id, market.ready)}
+                                        disabled={!market.ready}
+                                        style={{ width: '18px', height: '18px', accentColor: '#3b82f6', cursor: market.ready ? 'pointer' : 'not-allowed' }}
+                                    />
+                                    <span style={{ fontSize: '15px' }}>{market.label}</span>
+                                    {!market.ready && <span style={{ fontSize: '12px', color: '#94a3b8', marginLeft: '4px', background: '#e2e8f0', padding: '2px 6px', borderRadius: '4px' }}>준비중</span>}
+                                </label>
+                            ))}
+                        </div>
+                    </div>
+
                     <div className="glass-panel" style={{ marginBottom: '32px', textAlign: 'center', padding: '32px' }}>
                         <div style={{ fontSize: '32px', marginBottom: '16px' }}>🚀</div>
-                        <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '8px' }}>3. 스마트스토어 연동 실행</h3>
-                        <p style={{ color: '#cbd5e1', marginBottom: '24px', fontSize: '14px' }}>
-                            위의 상품 목록과 최종 가격이 맞다면, 스마트스토어 상품등록 API를 호출하여 내 스토어에 업로드합니다.
+                        <h3 style={{ margin: '0 0 16px 0', fontSize: '22px', color: '#1e293b', fontWeight: 700 }}>모든 준비가 완료되었습니다!</h3>
+                        <p style={{ color: '#64748b', marginBottom: '24px', fontSize: '15px' }}>
+                            위의 상품 목록과 최종 가격, 그리고 타겟 마켓({selectedMarkets.length}곳) 설정을 확인한 후 실행하세요.
                         </p>
-                        <button className="primary" onClick={handleSyncProducts} disabled={sheetData.length === 0} style={{ padding: '16px 48px', fontSize: '16px', fontWeight: 600, opacity: sheetData.length === 0 ? 0.5 : 1, cursor: sheetData.length === 0 ? 'not-allowed' : 'pointer' }}>
-                            연동(업로드) 시작하기
+                        <button className="primary" onClick={() => handleSyncProducts(selectedMarkets)} disabled={sheetData.length === 0 || selectedMarkets.length === 0} style={{ width: '100%', padding: '16px', fontSize: '16px', fontWeight: 600, opacity: (sheetData.length === 0 || selectedMarkets.length === 0) ? 0.5 : 1, cursor: (sheetData.length === 0 || selectedMarkets.length === 0) ? 'not-allowed' : 'pointer', transition: 'all 0.2s' }}>
+                            ☁️ 선택된 {selectedMarkets.length}개 마켓으로 일괄 배포 시작하기
                         </button>
                     </div>
                 </>
             )}
-
-            <hr style={{ border: 'none', borderTop: '1px dashed rgba(255,255,255,0.1)', margin: '48px 0 32px 0' }} />
-
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '32px' }}>
-                <div style={{ flex: '1 1 500px' }}>
-                    <SyncStepMaster masterSheetId={masterSheetId} />
-                </div>
-                <div style={{ flex: '1 1 300px' }}>
-                    <div className="glass-panel" style={{ height: '100%' }}>
-                        <div className="panel-title">🛒 주문 관리</div>
-                        <p style={{ color: '#cbd5e1', marginBottom: '24px', fontSize: '14px', lineHeight: '1.6' }}>최근 수정된 주문 내역을 실시간으로 가져옵니다.</p>
-                        <button className="ghost" onClick={handleFetchSmartStoreOrders} style={{ width: '100%', padding: '14px 24px' }}>
-                            📥 24h 주문 마이그레이션
-                        </button>
-                    </div>
-                </div>
-            </div>
         </div>
     );
 };

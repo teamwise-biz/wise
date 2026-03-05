@@ -1,16 +1,11 @@
 import * as React from 'react'
 import { useState, useRef } from 'react'
-import { Stepper, StepInfo } from './components/Stepper';
 import { ActionLogs } from './components/ActionLogs';
 import { DataPrepStep, ScrapeMethod } from './components/steps/DataPrepStep';
 import { MarketSyncStep } from './components/steps/MarketSyncStep';
+import { Sidebar, ViewType } from './components/Sidebar';
 
 type SyncStatus = 'pending' | 'syncing' | 'success' | 'failed'
-
-const WIZARD_STEPS: StepInfo[] = [
-  { id: 1, label: '데이터 준비 (엑셀)' },
-  { id: 2, label: '마켓 연동 (스토어 관리)' },
-];
 
 
 function App(): React.JSX.Element {
@@ -29,8 +24,8 @@ function App(): React.JSX.Element {
   const [marginRate, setMarginRate] = useState<number>(20);
   const [extraShippingCost, setExtraShippingCost] = useState<number>(0);
 
-  // Wizard State
-  const [currentStep, setCurrentStep] = useState<number>(1);
+  // Main View State
+  const [currentView, setCurrentView] = useState<ViewType>('SOURCING');
 
 
   const [masterSheetId, setMasterSheetId] = useState<string>('');
@@ -207,7 +202,8 @@ function App(): React.JSX.Element {
             response.data.manufacturer || "자체제작",             // M: 제조사
             response.data.origin || "아시아/중국",               // N: 원산지
             response.data.material || "상세화면 참조",            // O: 소재
-            response.data.modelName || ""                    // P: 모델명
+            response.data.modelName || "",                    // P: 모델명
+            response.data.kcCertification || ""               // Q: KC인증정보
           ];
 
           // 3. Write data to the next available row (Append) in the Google Sheet
@@ -274,9 +270,9 @@ function App(): React.JSX.Element {
 
         // Immediately write headers only, no sample data
         const headers = [
-          ['카테고리ID', '상품명', '상세설명', '대표이미지 URL', '판매가', '재고수량', '스마트스토어 상품번호', '출고지주소ID', '반품지주소ID', 'A/S전화번호', '기본배송비', '조건부무료액']
+          ['카테고리ID', '상품명', '상세설명', '대표이미지 URL', '판매가', '재고수량', '스마트스토어 상품번호', '출고지주소ID', '반품지주소ID', 'A/S전화번호', '기본배송비', '조건부무료액', '제조사', '원산지', '소재', '모델명', 'KC인증정보']
         ]
-        const writeRes = await window.electron.ipcRenderer.invoke('write-sheet', response.spreadsheetId, 'A1:L1', headers)
+        const writeRes = await window.electron.ipcRenderer.invoke('write-sheet', response.spreadsheetId, 'A1:Q1', headers)
         if (writeRes.success) {
           addLog('시트 헤더 초기화가 완료되었습니다.')
         } else {
@@ -299,7 +295,7 @@ function App(): React.JSX.Element {
 
     addLog('스프레드시트에서 상품을 읽어오는 중입니다...')
     try {
-      const response = await window.electron.ipcRenderer.invoke('read-sheet', sheetId, 'A:L')
+      const response = await window.electron.ipcRenderer.invoke('read-sheet', sheetId, 'A:Q')
 
       if (response.success) {
         if (response.data && response.data.length > 0) {
@@ -347,7 +343,7 @@ function App(): React.JSX.Element {
             setSheetData([]);
           }
         } else {
-          addLog(`시트가 비어있거나 A:L 범위에서 유효한 데이터를 찾지 못했습니다.`);
+          addLog(`시트가 비어있거나 A:Q 범위에서 유효한 데이터를 찾지 못했습니다.`);
           setSheetData([]);
         }
       } else {
@@ -359,7 +355,7 @@ function App(): React.JSX.Element {
     }
   }
 
-  const handleSyncProducts = async () => {
+  const handleSyncProducts = async (targetMarkets: string[]) => {
     if (sheetData.length === 0) {
       addLog('메모리에 상품 데이터가 없습니다. 먼저 [등록할 상품 시트에서 가져오기]를 실행해주세요.');
       return;
@@ -461,72 +457,89 @@ function App(): React.JSX.Element {
           } else {
             addLog(`⚠️ 이미지 변환 실패. 원본 URL을 전송합니다 (에러코드 반환 확률 높음).`);
           }
-        } catch (e) {
-          addLog(`⚠️ 이미지 업로드 IPC 에러 발생.`);
+        } catch (e: unknown) {
+          const errMsg = e instanceof Error ? e.message : String(e);
+          addLog(`⚠️ 이미지 업로드 IPC 에러 발생: ${errMsg}`);
         }
       }
 
-      try {
-        let response;
-        if (isUpdate) {
-          response = await window.electron.ipcRenderer.invoke('update-product', clientId, clientSecret, existingChannelProductNo, payloadRow);
-        } else {
-          response = await window.electron.ipcRenderer.invoke('register-product', clientId, clientSecret, payloadRow);
-        }
+      // 1:N Distibution Logic
+      const marketLogMsgs: string[] = [];
+      let allSuccess = true;
 
-        if (response.success) {
+      // [1] Naver SmartStore Target
+      if (targetMarkets.includes('smartstore')) {
+        try {
+          let response;
           if (isUpdate) {
-            updateCount++;
-            addLog(`✅ ${i}번째 상품 스토어 [수정] 성공! (상품번호: ${response.channelProductNo})`);
+            response = await window.electron.ipcRenderer.invoke('update-product', clientId, clientSecret, existingChannelProductNo, payloadRow);
           } else {
-            newRegisterCount++;
-            addLog(`✅ ${i}번째 상품 스토어 [신규등록] 성공! (채널상품번호: ${response.channelProductNo})`);
+            response = await window.electron.ipcRenderer.invoke('register-product', clientId, clientSecret, payloadRow);
           }
-          // Phase 6: Sync product ID back to Google Sheets Column G
-          const rowNumber = i + 1; // Sheets rows are 1-indexed
-          const cellRange = `G${rowNumber}`;
 
-          addLog(`시트 업데이트 중... (${cellRange})`);
-          try {
-            const sheetRes = await window.electron.ipcRenderer.invoke('update-sheet-cell', sheetId, cellRange, response.channelProductNo);
-            if (sheetRes.success) {
-              setSyncStatuses(prev => ({ ...prev, [i]: { status: 'success', message: `No: ${response.channelProductNo} (시트저장 완료)` } }));
+          if (response.success) {
+            marketLogMsgs.push('스마스스토어(성공)');
+            if (isUpdate) {
+              updateCount++;
+              addLog(`✅ ${i}번째 상품 스토어 [수정] 성공! (상품번호: ${response.channelProductNo})`);
             } else {
-              setSyncStatuses(prev => ({ ...prev, [i]: { status: 'success', message: `No: ${response.channelProductNo} (시트저장 실패: ${sheetRes.error})` } }));
+              newRegisterCount++;
+              addLog(`✅ ${i}번째 상품 스토어 [신규등록] 성공! (채널상풍번호: ${response.channelProductNo})`);
             }
 
-            // Phase 7: Append to Master DB Sheet (Only for new registrations to avoid appending updates repeatedly)
-            if (masterSheetId && !isUpdate) {
-              const currentDate = new Date().toISOString();
-              // [Vendor, SKU/Name, ChannelProductNo, Price, Date]
-              const masterRow = [
-                '도매토피아',
-                sheetData[i][1] || 'UnknownItem',
-                response.channelProductNo,
-                finalPrice.toString(),
-                currentDate
-              ];
-              const appendRes = await window.electron.ipcRenderer.invoke('append-to-master-sheet', masterSheetId, [masterRow]);
-              if (!appendRes.success) {
-                addLog(`⚠️ 마스터 DB 기록 실패: ${appendRes.error}`);
-              } else {
-                addLog(`✅ 마스터 DB 신규 기록 완료: ${response.channelProductNo}`);
+            // Phase 6: Sync product ID back to Google Sheets Column G
+            const rowNumber = i + 1; // Sheets rows are 1-indexed
+            const cellRange = `G${rowNumber}`;
+
+            addLog(`시트 업데이트 중... (${cellRange})`);
+            try {
+              const sheetRes = await window.electron.ipcRenderer.invoke('update-sheet-cell', sheetId, cellRange, response.channelProductNo);
+              if (!sheetRes.success) {
+                addLog(`⚠️ 시트저장 실패: ${sheetRes.error}`);
               }
-            } else if (masterSheetId && isUpdate) {
-              addLog(`ℹ️ (마스터 DB에 이미 기록된 항목이므로 가격/업데이트 내역은 스마트스토어에만 반영됨)`);
+
+              // Phase 7: Append to Master DB Sheet
+              if (masterSheetId && !isUpdate) {
+                const currentDate = new Date().toISOString();
+                const masterRow = [
+                  '도매토피아',
+                  sheetData[i][1] || 'UnknownItem',
+                  response.channelProductNo,
+                  finalPrice.toString(),
+                  currentDate
+                ];
+                const appendRes = await window.electron.ipcRenderer.invoke('append-to-master-sheet', masterSheetId, [masterRow]);
+                if (!appendRes.success) addLog(`⚠️ 마스터 DB 기록 실패: ${appendRes.error}`);
+                else addLog(`✅ 마스터 DB 신규 기록 완료: ${response.channelProductNo}`);
+              }
+            } catch (e: unknown) {
+              addLog(`⚠️ 시트저장/마스터DB 연동 오류: ${e instanceof Error ? e.message : String(e)}`);
             }
-          } catch {
-            setSyncStatuses(prev => ({ ...prev, [i]: { status: 'success', message: `No: ${response.channelProductNo} (시트저장 오류)` } }));
+          } else {
+            marketLogMsgs.push(`스마트스토어(오류)`);
+            addLog(`❌ [스마트스토어] ${i}번째 상품 전송 실패: ${response.error}`);
+            allSuccess = false;
           }
-        } else {
-          addLog(`❌ ${i}번째 상품 실패: ${response.error}`);
-          setSyncStatuses(prev => ({ ...prev, [i]: { status: 'failed', message: response.error } }));
+        } catch (error: unknown) {
+          const msg = error instanceof Error ? error.message : String(error);
+          marketLogMsgs.push(`스마트스토어(치명적오류)`);
+          addLog(`❌ [스마트스토어] ${i}번째 상품 처리 중 로직 에러: ${msg}`);
+          allSuccess = false;
         }
-      } catch (error: unknown) {
-        const msg = error instanceof Error ? error.message : String(error);
-        addLog(`❌ ${i}번째 상품 ${isUpdate ? '수정' : '등록'} 중 오류 발생: ${msg}`);
-        setSyncStatuses(prev => ({ ...prev, [i]: { status: 'failed', message: msg } }));
       }
+
+      // [2] Additional Markets (Placeholders)
+      const otherMarkets = targetMarkets.filter(m => m !== 'smartstore');
+      for (const m of otherMarkets) {
+        marketLogMsgs.push(`${m}(준비중)`);
+        allSuccess = false; // We didn't sync yet, mark as partially failed to get attention
+      }
+
+      // Aggregating 1:N Status
+      setSyncStatuses(prev => ({
+        ...prev,
+        [i]: { status: allSuccess ? 'success' : 'failed', message: marketLogMsgs.join(' | ') }
+      }));
     }
 
     addLog(`✨ 모든 연동 작업이 완료되었습니다! (신규 등록: ${newRegisterCount}건, 정보 수정: ${updateCount}건)`);
@@ -612,66 +625,72 @@ function App(): React.JSX.Element {
   }
 
   return (
-    <div className="app-container">
-      {/* Left: Main Steps Wizard */}
-      <div className="wizard-container">
-        <Stepper steps={WIZARD_STEPS} currentStep={currentStep} />
+    <div style={{ display: 'flex', height: '100vh', width: '100vw', margin: 0, padding: 0, backgroundColor: '#f7fafc', overflow: 'hidden' }}>
+      <Sidebar currentView={currentView} setCurrentView={setCurrentView} />
 
-        <div className="step-content-scroll">
-          {currentStep === 1 && (
-            <DataPrepStep
-              sheetId={sheetId}
-              handleCreateSheet={handleCreateSheet}
-              handleOpenSheet={handleOpenSheet}
-              scrapeMethod={scrapeMethod}
-              setScrapeMethod={setScrapeMethod}
-              scrapeQuery={scrapeQuery}
-              setScrapeQuery={setScrapeQuery}
-              handleScrape={handleScrape}
-              isScraping={isScraping}
-              handleCancelScrape={handleCancelScrape}
-            />
-          )}
-
-          {currentStep === 2 && (
-            <MarketSyncStep
-              sheetData={sheetData}
-              syncStatuses={syncStatuses}
-              handleReadProducts={handleReadProducts}
-              handleSyncProducts={handleSyncProducts}
-              handleFetchSmartStoreOrders={handleFetchSmartStoreOrders}
-              marginRate={marginRate}
-              setMarginRate={setMarginRate}
-              extraShippingCost={extraShippingCost}
-              setExtraShippingCost={setExtraShippingCost}
-              masterSheetId={masterSheetId!}
-            />
-          )}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+        <div style={{ padding: '24px 32px', borderBottom: '1px solid rgba(0,0,0,0.05)', backgroundColor: 'rgba(255,255,255,0.8)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 700, color: '#2d3748' }}>
+            {currentView === 'SOURCING' && '상품 수집 (소싱 마스터)'}
+            {currentView === 'SYNC' && '마켓 연동 (배포 마스터)'}
+            {currentView === 'ORDERS' && '주문 관리'}
+            {currentView === 'SETTINGS' && '환경 설정'}
+          </h2>
+          {masterSheetId && <span style={{ fontSize: '12px', color: '#718096', backgroundColor: '#edf2f7', padding: '4px 12px', borderRadius: '12px', fontWeight: 600 }}>마스터 DB 연결됨</span>}
         </div>
 
-        <div className="wizard-footer">
-          <button
-            className="ghost"
-            onClick={() => setCurrentStep(prev => Math.max(1, prev - 1))}
-            disabled={currentStep === 1}
-          >
-            ← 이전 단계
-          </button>
+        <div style={{ display: 'flex', gap: '24px', flex: 1, padding: '32px', overflow: 'hidden' }}>
+          <div className="card glass-panel" style={{ flex: '1 1 60%', display: 'flex', flexDirection: 'column', padding: '32px', overflowY: 'auto' }}>
+            {currentView === 'SOURCING' && (
+              <DataPrepStep
+                sheetId={sheetId}
+                handleCreateSheet={handleCreateSheet}
+                handleOpenSheet={handleOpenSheet}
+                scrapeMethod={scrapeMethod}
+                setScrapeMethod={setScrapeMethod}
+                scrapeQuery={scrapeQuery}
+                setScrapeQuery={setScrapeQuery}
+                handleScrape={handleScrape}
+                isScraping={isScraping}
+                handleCancelScrape={handleCancelScrape}
+              />
+            )}
 
-          <div style={{ fontWeight: 600, color: '#e2e8f0' }}>{currentStep} / {WIZARD_STEPS.length} 구역 이동</div>
+            {currentView === 'SYNC' && (
+              <MarketSyncStep
+                sheetData={sheetData}
+                syncStatuses={syncStatuses}
+                handleReadProducts={handleReadProducts}
+                handleSyncProducts={handleSyncProducts}
+                handleFetchSmartStoreOrders={handleFetchSmartStoreOrders}
+                marginRate={marginRate}
+                setMarginRate={setMarginRate}
+                extraShippingCost={extraShippingCost}
+                setExtraShippingCost={setExtraShippingCost}
+                masterSheetId={masterSheetId!}
+              />
+            )}
 
-          <button
-            className="primary"
-            onClick={() => setCurrentStep(prev => Math.min(WIZARD_STEPS.length, prev + 1))}
-            disabled={currentStep === WIZARD_STEPS.length}
-          >
-            {currentStep === WIZARD_STEPS.length ? '완료' : '다음 단계 →'}
-          </button>
+            {currentView === 'ORDERS' && (
+              <div style={{ textAlign: 'center', padding: '40px', color: '#718096' }}>
+                <div style={{ fontSize: '48px', marginBottom: '16px' }}>📝</div>
+                <h3 style={{ margin: '0 0 8px 0', color: '#2d3748' }}>주문 자동 수집 및 처리</h3>
+                <p style={{ margin: 0 }}>각 마켓의 신규 주문을 수집하여 발주서 포맷으로 출력하거나 마스터 DB에 기록합니다. (준비 중 항목)</p>
+              </div>
+            )}
+
+            {currentView === 'SETTINGS' && (
+              <div style={{ textAlign: 'center', padding: '40px', color: '#718096' }}>
+                <div style={{ fontSize: '48px', marginBottom: '16px' }}>⚙️</div>
+                <h3 style={{ margin: '0 0 8px 0', color: '#2d3748' }}>다중 마켓 인증 및 환경 설정</h3>
+                <p style={{ margin: 0 }}>스마트스토어, 쿠팡, 셀러툴 등 각 연동 서비스의 API 키와 배송지 정보를 통합 관리합니다. (준비 중 항목)</p>
+              </div>
+            )}
+          </div>
+
+          <ActionLogs logs={logs} />
         </div>
       </div>
-
-      {/* Right: Action Logs Terminal */}
-      <ActionLogs logs={logs} />
     </div>
   );
 }

@@ -163,23 +163,50 @@ async function fetchSmartStoreOrderDetails(token: string, productOrderIds: strin
     }
 }
 
-function getProductInfoProvidedNotice(_categoryId: string) {
-    // 상품 카테고리에 따른 고시정보 템플릿 반환
-    // PoC 단계이므로 현재는 '기타(ETC)'로 통일. 향후 categoryId에 따라 의류/가전 등으로 분기 가능
+function getProductInfoProvidedNotice(categoryId: string, material: string, manufacturer: string, asPhoneNumber: string) {
+    // 향후 카테고리 ID 매핑을 고도화하여 의류(WEAR), 식품(FOOD) 등으로 세분화 가능
+    // 현재는 안전장치로서 ETC(기타)를 유지하되, 파싱한 상세 정보를 꼼꼼히 매핑하여 제재를 피함
     return {
         "productInfoProvidedNoticeType": "ETC",
         "etc": {
             "returnCostReason": "상세페이지 참조",
             "noRefundReason": "상세페이지 참조",
-            "qualityAssuranceStandard": "상세페이지 참조",
+            "qualityAssuranceStandard": "결함시 교환/환불 (상세참조)",
             "compensationProcedure": "상세페이지 참조",
             "troubleShootingContents": "상세페이지 참조",
-            "itemName": "상세페이지 참조",
+            "itemName": "상세페이지 설명 참조", // 상품분류/모델명
             "modelName": "상세페이지 참조",
-            "manufacturer": "상세페이지 참조",
-            "afterServiceDirector": "010-0000-0000"
+            "manufacturer": manufacturer || "협력업체",
+            "afterServiceDirector": asPhoneNumber
         }
     };
+}
+
+function getOriginAreaCode(originName: string): string {
+    const name = originName.toLowerCase();
+    if (name.includes('한국') || name.includes('국산') || name.includes('대한민국') || name.includes('korea')) return "00";
+    if (name.includes('중국') || name.includes('china') || name.includes('prc')) return "0200037"; // 수입산:아시아>중국
+    if (name.includes('베트남') || name.includes('vietnam')) return "0200014"; // 수입산:아시아>베트남
+    if (name.includes('일본') || name.includes('japan')) return "0200036";
+    if (name.includes('미국') || name.includes('usa')) return "0204000"; // 수입산:북아메리카>미국
+    if (name.includes('대만') || name.includes('taiwan')) return "0200002";
+    if (name.includes('태국') || name.includes('thailand')) return "0200044";
+    if (name.includes('인도네시아')) return "0200034";
+    if (name.includes('인도')) return "0200033";
+    if (name.includes('말레이시아')) return "0200008";
+    return "02"; // 수입산 기본
+}
+
+function extractBrandName(manufacturer: string): string {
+    const lower = manufacturer.toLowerCase();
+    // 긴 중국 공장 영문명이나 법인명 등은 브랜드 가치가 없으므로 제외
+    if (lower.includes('ltd') || lower.includes('co.,') || lower.includes('co.') || lower.includes('inc') || lower.includes('company')) {
+         return "협력업체";
+    }
+    if (manufacturer.includes('자체제작') || manufacturer.length > 15) {
+         return "협력업체"; // 네이버 협력업체 처리
+    }
+    return manufacturer || "협력업체";
 }
 
 export async function registerSmartStoreProduct(credentials: SmartStoreCredentials, productData: string[]) {
@@ -219,11 +246,13 @@ export async function registerSmartStoreProduct(credentials: SmartStoreCredentia
     // --- New Metadata Logic ---
     const manufacturerName = productData[12] || "자체제작";
     const originName = productData[13] || "아시아/중국";
+    const material = productData[14] || "";
     const modelName = productData[15] || "";
+    const kcCertification = productData[16] || "";
 
     const isDomestic = originName.includes('한국') || originName.includes('국산') || originName.includes('대한민국');
-    const isChina = originName.includes('중국');
-    const originAreaCode = isDomestic ? "00" : (isChina ? "0204000" : "04");
+    const originAreaCode = getOriginAreaCode(originName);
+    const brandName = extractBrandName(manufacturerName);
 
     // --- Delivery Fee Logic ---
     const baseDeliveryFee = productData[10] ? parseInt(productData[10], 10) : 0;
@@ -250,9 +279,7 @@ export async function registerSmartStoreProduct(credentials: SmartStoreCredentia
         }
     }
 
-    const productInfoProvidedNotice = getProductInfoProvidedNotice(categoryId);
-    productInfoProvidedNotice.etc.afterServiceDirector = asPhoneNumber;
-    productInfoProvidedNotice.etc.manufacturer = manufacturerName;
+    const productInfoProvidedNotice = getProductInfoProvidedNotice(categoryId, material, manufacturerName, asPhoneNumber);
 
     const productPayload = {
         "originProduct": {
@@ -283,9 +310,9 @@ export async function registerSmartStoreProduct(credentials: SmartStoreCredentia
             },
             "detailAttribute": {
                 "naverShoppingSearchInfo": {
-                    "manufacturerName": manufacturerName,
-                    "brandName": manufacturerName, // Dometopia usually lacks strict brand names, so fallback to maker
-                    "modelName": modelName
+                    "manufacturerName": manufacturerName.substring(0, 50),
+                    "brandName": brandName ? brandName.substring(0, 50) : undefined,
+                    "modelName": modelName ? modelName.substring(0, 50) : undefined
                 },
                 "afterServiceInfo": {
                     "afterServiceTelephoneNumber": asPhoneNumber,
@@ -302,8 +329,8 @@ export async function registerSmartStoreProduct(credentials: SmartStoreCredentia
                 },
                 "originAreaInfo": {
                     "originAreaCode": originAreaCode,
-                    "importer": isDomestic ? "" : manufacturerName,
-                    "manufacturer": manufacturerName,
+                    "importer": isDomestic ? "" : manufacturerName.substring(0, 50),
+                    "manufacturer": manufacturerName.substring(0, 50),
                     "content": originName
                 },
                 "productInfoProvidedNotice": productInfoProvidedNotice,
@@ -319,6 +346,17 @@ export async function registerSmartStoreProduct(credentials: SmartStoreCredentia
             "naverShoppingRegistration": true
         }
     };
+
+    // 만약 KC 인증정보가 존재하면 추가
+    if (kcCertification) {
+        (productPayload.originProduct.detailAttribute as any).productCertificationInfos = [
+            {
+                "certificationInfoId": 51, // 51: [생활용품]안전인증_국가인증
+                "certificationNumber": kcCertification,
+                "name": manufacturerName.substring(0, 50)
+            }
+        ];
+    }
 
     try {
         const response = await axios.post('https://api.commerce.naver.com/external/v2/products', productPayload, {
@@ -367,11 +405,13 @@ export async function updateSmartStoreProduct(credentials: SmartStoreCredentials
     // --- New Metadata Logic ---
     const manufacturerName = productData[12] || "자체제작";
     const originName = productData[13] || "아시아/중국";
+    const material = productData[14] || "";
     const modelName = productData[15] || "";
+    const kcCertification = productData[16] || "";
 
     const isDomestic = originName.includes('한국') || originName.includes('국산') || originName.includes('대한민국');
-    const isChina = originName.includes('중국');
-    const originAreaCode = isDomestic ? "00" : (isChina ? "0204000" : "04");
+    const originAreaCode = getOriginAreaCode(originName);
+    const brandName = extractBrandName(manufacturerName);
 
     // --- Delivery Fee Logic ---
     const baseDeliveryFee = productData[10] ? parseInt(productData[10], 10) : 0;
@@ -420,9 +460,7 @@ export async function updateSmartStoreProduct(credentials: SmartStoreCredentials
 
     // 상품 수정용 PUT 페이로드
     
-    const productInfoProvidedNotice = getProductInfoProvidedNotice(existingLeafCategoryId);
-    productInfoProvidedNotice.etc.afterServiceDirector = asPhoneNumber;
-    productInfoProvidedNotice.etc.manufacturer = manufacturerName;
+    const productInfoProvidedNotice = getProductInfoProvidedNotice(existingLeafCategoryId, material, manufacturerName, asPhoneNumber);
 
     const productPayload = {
         "originProduct": {
@@ -451,9 +489,9 @@ export async function updateSmartStoreProduct(credentials: SmartStoreCredentials
             },
             "detailAttribute": {
                 "naverShoppingSearchInfo": {
-                    "manufacturerName": manufacturerName,
-                    "brandName": manufacturerName,
-                    "modelName": modelName
+                    "manufacturerName": manufacturerName.substring(0, 50),
+                    "brandName": brandName ? brandName.substring(0, 50) : undefined,
+                    "modelName": modelName ? modelName.substring(0, 50) : undefined
                 },
                 "afterServiceInfo": {
                     "afterServiceTelephoneNumber": asPhoneNumber,
@@ -470,8 +508,8 @@ export async function updateSmartStoreProduct(credentials: SmartStoreCredentials
                 },
                 "originAreaInfo": {
                     "originAreaCode": originAreaCode,
-                    "importer": isDomestic ? "" : manufacturerName,
-                    "manufacturer": manufacturerName,
+                    "importer": isDomestic ? "" : manufacturerName.substring(0, 50),
+                    "manufacturer": manufacturerName.substring(0, 50),
                     "content": originName
                 },
                 "productInfoProvidedNotice": productInfoProvidedNotice,
@@ -487,6 +525,17 @@ export async function updateSmartStoreProduct(credentials: SmartStoreCredentials
             "naverShoppingRegistration": true
         }
     };
+
+    // 만약 KC 인증정보가 존재하면 추가 (기타 인증으로 우회 전송 형태)
+    if (kcCertification) {
+        (productPayload.originProduct.detailAttribute as any).productCertificationInfos = [
+            {
+                "certificationInfoId": 51, 
+                "certificationNumber": kcCertification,
+                "name": manufacturerName.substring(0, 50)
+            }
+        ];
+    }
 
     try {
         const response = await axios.put(`https://api.commerce.naver.com/external/v2/products/channel-products/${channelProductNo}`, productPayload, {
@@ -626,60 +675,113 @@ export async function updateSmartstoreProductStatus(credentials: SmartStoreCrede
     try {
         const token = await getSmartStoreToken(credentials);
         
-        // 먼저 원본 상품번호(originProductNo)를 알아야 할 수 있으므로 겟팅
-        const getRes = await axios.get(`https://api.commerce.naver.com/external/v2/products/channel-products/${channelProductNo}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
+        // 1. originProductNo를 얻기 위해 search API 활용
+        const searchRes = await axios.post(`https://api.commerce.naver.com/external/v1/products/search`, {
+            searchCondition: "CHANNEL_PRODUCT_NO",
+            channelProductNo: channelProductNo
+        }, {
+            headers: { 
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            timeout: 10000
         });
-        const originProductNo = getRes.data?.channelProduct?.originProductNo;
+        
+        const originProductNo = searchRes.data?.contents?.[0]?.originProductNo;
         
         if (!originProductNo) {
-             throw new Error("Cannot find originProductNo for update");
+             throw new Error(`Cannot find originProductNo for channel product ${channelProductNo} via search API.`);
         }
 
+        // 2. 상태만 변경하는 전용 API (v1 change-status)
         const payload = {
             statusType: statusType
         };
 
-        await axios.put(`https://api.commerce.naver.com/external/v2/products/origin-products/${originProductNo}/status`, payload, {
+        await axios.put(`https://api.commerce.naver.com/external/v1/products/origin-products/${originProductNo}/change-status`, payload, {
             headers: { 
                 'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json'
-            }
-        });
-        
-        return true;
-    } catch (error: any) {
-        const errorMsg = error.response?.data?.message || error.message;
-        throw new Error(`Failed to update product status: ${errorMsg}`);
-    }
-}
-
-/**
- * 네이버 스마트스토어 특정 상품을 삭제합니다.
- */
-export async function deleteSmartstoreProduct(credentials: SmartStoreCredentials, channelProductNo: string): Promise<boolean> {
-     try {
-        const token = await getSmartStoreToken(credentials);
-        
-        const getRes = await axios.get(`https://api.commerce.naver.com/external/v2/products/channel-products/${channelProductNo}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const originProductNo = getRes.data?.channelProduct?.originProductNo;
-        
-        if (!originProductNo) {
-             throw new Error("Cannot find originProductNo for deletion");
-        }
-
-        await axios.delete(`https://api.commerce.naver.com/external/v2/products/origin-products/${originProductNo}`, {
-            headers: { 'Authorization': `Bearer ${token}` },
+            },
             timeout: 10000
         });
         
         return true;
     } catch (error: any) {
-        if (error.response?.status === 404) return true; // 이미 없으면 성공처리
-        const errorMsg = error.response?.data?.message || error.message;
-        throw new Error(`Failed to delete product: ${errorMsg}`);
+        let errorMessage = error.message;
+        if (error.response && error.response.data) {
+            errorMessage = JSON.stringify(error.response.data);
+        } else if (error.response && error.response.statusText) {
+            errorMessage = `${error.response.status} - ${error.response.statusText}`;
+        }
+        throw new Error(`Failed to update product status: ${errorMessage}`);
+    }
+}
+
+/**
+ * 네이버 스마트스토어 특정 상품을 삭제합니다.
+ * 완전 삭제 엔드포인트 호출의 복잡성과 API 오류를 우회하기 위해, 대신 상태를 무조건 '품절(OUTOFSTOCK)'로 강제 덮어씌웁니다.
+ */
+export async function deleteSmartstoreProduct(credentials: SmartStoreCredentials, channelProductNo: string): Promise<boolean> {
+     try {
+        return await updateSmartstoreProductStatus(credentials, channelProductNo, 'OUTOFSTOCK');
+    } catch (error: any) {
+        throw error;
+    }
+}
+
+/**
+ * 네이버 스마트스토어 특정 상품의 가격만을 안전하게 업데이트합니다.
+ * 조회된 원본 상품 데이터를 기반으로 salePrice만 변경하여 덮어씁니다.
+ */
+export async function updateSmartStorePrice(credentials: SmartStoreCredentials, channelProductNo: string, newPrice: number): Promise<boolean> {
+    try {
+        const token = await getSmartStoreToken(credentials);
+        
+        // 1. 기존 상품 데이터를 원형 그대로 가져옴
+        const getRes = await axios.get(`https://api.commerce.naver.com/external/v2/products/channel-products/${channelProductNo}`, {
+            headers: { 'Authorization': `Bearer ${token}` },
+            timeout: 10000
+        });
+
+        const originProduct = getRes.data?.originProduct;
+        if (!originProduct) {
+             throw new Error("Cannot find originProduct payload for price update");
+        }
+
+        // 2. 가격만 수정
+        originProduct.salePrice = newPrice;
+
+        // 3. 수정용 페이로드 재조립
+        // channelProductDisplayStatusType 은 그대로 유지하거나 무조건 ON. 
+        // 웬만하면 상품이 판매중(적어도 전시중)이어야 가격이 바뀌는 의미가 있음
+        const productPayload = {
+            "originProduct": originProduct,
+            "smartstoreChannelProduct": {
+                "naverShoppingIsForcedDisplay": true,
+                "channelProductDisplayStatusType": "ON",
+                "naverShoppingRegistration": true
+            }
+        };
+
+        // 4. 상품 전체 수정(PUT)으로 전송
+        await axios.put(`https://api.commerce.naver.com/external/v2/products/channel-products/${channelProductNo}`, productPayload, {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            timeout: 15000
+        });
+
+        return true;
+    } catch (error: any) {
+         let errorMessage = error.message;
+         if (error.response && error.response.data) {
+             errorMessage = JSON.stringify(error.response.data);
+         } else if (error.response && error.response.statusText) {
+             errorMessage = `${error.response.status} - ${error.response.statusText}`;
+         }
+         throw new Error(`[SmartStore API 에러] 상품 가격 수정 실패: ${errorMessage}`);
     }
 }
 

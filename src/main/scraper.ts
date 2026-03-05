@@ -4,15 +4,21 @@ const cheerio = require('cheerio');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const iconv = require('iconv-lite');
 
-export async function scrapeDometopiaProduct(url: string) {
+export async function scrapeDometopiaProduct(url: string, cookie?: string | null) {
     try {
+        const headers: any = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+        };
+        
+        if (cookie) {
+            headers['Cookie'] = cookie;
+        }
+
         // Dometopia mostly uses EUC-KR encoding, so we need to fetch as arraybuffer and decode
         const response = await axios.get(url, {
             responseType: 'arraybuffer',
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
-            }
+            headers
         });
 
         // Try decoding as EUC-KR first (standard for legacy Korean malls)
@@ -88,10 +94,63 @@ export async function scrapeDometopiaProduct(url: string) {
                 }
             });
             
-            // 불필요 태그 제거
+            // 불필요 스크립트 등 제거
             $spec.find('script, link, style').remove();
             
-            detailHtml = $spec.html() || '';
+            // --- 가독성 개선 및 모바일 화질 최적화 (Sanitization & Responsive styling) ---
+            
+            // 1. 구형 레이아웃 속성 싹쓸이 (인라인 스타일, 클래스와 정렬 제거)
+            $spec.find('*').removeAttr('style').removeAttr('class').removeAttr('width').removeAttr('height').removeAttr('border').removeAttr('bgcolor').removeAttr('align').removeAttr('valign').removeAttr('id');
+            
+            // 2. <font>, <span> 등의 텍스트 꾸밈 무의미한 태그만 텍스트로 보존하며 날리기 (div는 레이아웃을 위해 보존)
+            $spec.find('font, span').each((_i, el) => {
+                $(el).replaceWith($(el).html() || '');
+            });
+
+            // 3. 이미지 모바일 반응형 처리 (가로폭 100% 넘지 않게 중앙 정렬) 및 공통 배너 삭제
+            $spec.find('img').each((_i, el) => {
+                const src = $(el).attr('src') || '';
+                if (src.includes('all_top_img') || src.includes('gtd_title') || src.includes('top_ban')) {
+                    $(el).remove();
+                } else {
+                    $(el).attr('style', 'max-width: 100%; height: auto; display: block; margin: 20px auto; border-radius: 8px;');
+                }
+            });
+
+            // 4. 고정폭 Table 모바일 반응형 및 깔끔한 회색톤 UI 적용
+            $spec.find('table').each((_i, el) => {
+                $(el).before('<div style="overflow-x: auto; margin: 30px 0;">');
+                $(el).attr('style', 'width: 100%; min-width: 300px; max-width: 100%; border-collapse: collapse; font-size: 14px; color: #444; text-align: left; border-top: 2px solid #333;');
+            });
+            $spec.find('th, td').each((_i, el) => {
+                $(el).attr('style', 'border-bottom: 1px solid #eee; padding: 12px 15px; line-height: 1.6; word-break: keep-all; vertical-align: top;');
+            });
+            $spec.find('th').each((_i, el) => {
+                 const currentStyle = $(el).attr('style') || '';
+                 $(el).attr('style', currentStyle + ' background-color: #f9f9fa; font-weight: bold; width: 30%; color: #222;');
+            });
+            $spec.find('table').each((_i, el) => {
+                $(el).after('</div>'); // 테이블 스크롤용 div 닫기 (Cheerio 렌더링 특성상 구조 보정 필요할 수 있음)
+            });
+
+            // 5. 남은 텍스트 요소들(p, div 등) 가독성 극대화 (줄간격, 폰트사이즈, 텍스트 중앙정렬)
+            $spec.find('p, div').each((_i, el) => {
+                // 이미지가 포함된 div/p이면 굳이 스타일 안먹임
+                if ($(el).find('img').length === 0 && $(el).text().trim() !== '') {
+                    $(el).attr('style', 'line-height: 1.8; color: #222; word-break: keep-all; font-size: 16px; margin: 15px auto; text-align: center; max-width: 800px; padding: 0 15px;');
+                }
+            });
+
+            let cleanHtml = $spec.html() || '';
+            
+            // 6. 무의미한 빈칸이나 줄바꿈 떡칠 삭제 (Regex 가공)
+            cleanHtml = cleanHtml.replace(/<p[^>]*>\s*<\/p>/g, '') // 빈 p 태그
+                                 .replace(/<div[^>]*>\s*<\/div>/g, '') // 빈 div 태그
+                                 .replace(/<br\s*\/?>\s*<br\s*\/?>+/gi, '<br><br>') // 3개 이상의 br을 2개로 압축
+                                 .replace(/&nbsp;/g, ' ') // 하드 공백 일반 공백화
+                                 .replace(/>\s+</g, '><'); // 태그 사이 공백 축소
+            
+            detailHtml = `<div style="font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; background-color: #fff; padding: 20px 0;">${cleanHtml}</div>`;
         }
 
         // 보완 로직: 만약 $spec 을 못 찾았거나, 내용이 부실하다면 구체적인 이미지 태그 직접 탐색
@@ -124,7 +183,7 @@ export async function scrapeDometopiaProduct(url: string) {
 
         // 그래도 내용이 아무것도 없다면 기본 제공고시 표시
         if (!detailHtml || detailHtml.trim() === '') {
-            detailHtml = '<p>상세설명 참조</p>';
+            detailHtml = '<p style="text-align: center; color: #666; font-size: 14px; padding: 50px 0;">상세설명 참조</p>';
         }
 
         // --- 배송비(Delivery Fee) 파싱 ---
@@ -182,6 +241,33 @@ export async function scrapeDometopiaProduct(url: string) {
             }
         });
 
+        // --- KC 인증 정보 (KC Certification) 파싱 ---
+        let kcCertification = '';
+        $spec.find('p, div, span').each((_i, el) => {
+             const text = $(el).text().replace(/\s+/g, ' ').trim();
+             // 정규식으로 안전인증번호(전기용품, 어린이용품 등) 추출
+             // 예: CB061Rxxxx-xxxx, R-R-xxx-xxxx, HU07xxxx-xxxx, SU07xxxx-xxxx, B052Rxxx-xxxx 등
+             const kcMatch = text.match(/([A-Z]{2,3}[0-9]{4,5}[A-Z]?[0-9]*-[0-9A-Za-z]+|R-[A-Z]-[a-zA-Z0-9]+-[a-zA-Z0-9]+|CB[0-9]{2}[A-Za-z][0-9]+-[0-9]+|SU[0-9]{2}[A-Za-z][0-9]+-[0-9]+)/);
+             if (kcMatch) {
+                 kcCertification = kcMatch[1];
+             } else if (text.includes('KC마크') || text.includes('인증번호')) {
+                 // 좀 더 넓은 패턴
+                 const broadMatch = text.match(/([A-Z0-9]+-[A-Z0-9]+-[A-Z0-9]+)/);
+                 if (broadMatch && !broadMatch[1].startsWith('010')) {
+                     kcCertification = broadMatch[1];
+                 }
+             }
+        });
+
+        // HTML 본문(문자열 전체)에서 fallback 검색
+        if (!kcCertification) {
+             const htmlText = $.html() || '';
+             const htmMatch = htmlText.match(/([A-Z]{2,3}[0-9]{4,5}[A-Z]?[0-9]*-[0-9A-Za-z]+|R-[A-Z]-[a-zA-Z0-9]+-[a-zA-Z0-9]+)/);
+             if (htmMatch) {
+                 kcCertification = htmMatch[1];
+             }
+        }
+
         // --- 카테고리(Category Path) 파싱 ---
         // 도매토피아는 UI 상에 경로가 명시되지 않으므로(단순 코드만 존재) meta keywords 스팬을 파싱.
         // ex: <meta name="keywords" content="주방용품 > 보관/밀폐용기 > 보온/보냉병 델데이 데이보틀, 텀블러, ...">
@@ -230,6 +316,7 @@ export async function scrapeDometopiaProduct(url: string) {
                 origin,
                 material,
                 modelName,
+                kcCertification,
                 // 스마트 매핑을 위한 전체 카테고리 경로
                 categoryPath
             }
@@ -246,19 +333,27 @@ export async function scrapeDometopiaProduct(url: string) {
  * @param baseUrl 카테고리/검색 베이스 URL
  * @returns 상품 상세 URL들의 배열
  */
-export async function scrapeCategoryLinks(baseUrl: string): Promise<{ success: boolean, links?: string[], error?: string }> {
+export async function scrapeCategoryLinks(baseUrl: string, cookie?: string | null): Promise<{ success: boolean, links?: string[], error?: string }> {
     try {
         const linksSet = new Set<string>();
         let page = 1;
         const maxPages = 10;
         
+        const headers: any = {
+             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        };
+        if (cookie) {
+             headers['Cookie'] = cookie;
+        }
+
         while (page <= maxPages) {
             // URL에 이미 파라미터가 있는지 확인하고 page 파라미터 추가
             const urlSeparator = baseUrl.includes('?') ? '&' : '?';
             const pageUrl = `${baseUrl}${urlSeparator}page=${page}`;
             
             const response = await axios.get(pageUrl, {
-                responseType: 'arraybuffer'
+                responseType: 'arraybuffer',
+                headers
             });
 
             // EUC-KR 디코딩
@@ -298,3 +393,84 @@ export async function scrapeCategoryLinks(baseUrl: string): Promise<{ success: b
         throw new Error(`Failed to scrape category links: ${error?.message || String(error)}`);
     }
 }
+
+/**
+ * 도매토피아 상품의 현재 상태(단종/품절 여부 및 가격)를 빠르게 확인하는 경량 스크래퍼 기능
+ * 모니터링 씽크 작업 시 이미지나 상세설명 파싱을 생략하여 속도를 높입니다.
+ * @param itemCode 도매토피아 상품 코드
+ * @param cookie 도매회원 인가를 위한 세션 쿠키
+ * @returns 상태 (단종 여부, 현재 가격)
+ */
+export async function checkDometopiaStatus(itemCode: string, cookie?: string | null): Promise<{ isOutOfStock: boolean, currentPrice?: number, error?: string }> {
+    try {
+        const url = `https://dometopia.com/goods/view?no=${itemCode}`;
+        const headers: any = {
+             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        };
+        if (cookie) headers['Cookie'] = cookie;
+
+        // axios defaults to throwing on 4xx/5xx responses
+        // We catch them down below. But Dometopia might return 200 with an alert script instead of 404.
+        const response = await axios.get(url, {
+            responseType: 'arraybuffer',
+            headers,
+            // don't follow redirects automatically if we want to catch "deleted" items redirecting to home
+            maxRedirects: 0,
+            validateStatus: (status) => status >= 200 && status < 303 // accept 301/302 as well to inspect them
+        });
+
+        // If it redirected, it might be heavily deleted or invalid
+        if (response.status === 301 || response.status === 302) {
+             return { isOutOfStock: true };
+        }
+
+        let html = iconv.decode(response.data, 'EUC-KR');
+        if (html.includes('utf-8') || html.includes('UTF-8')) {
+            html = iconv.decode(response.data, 'UTF-8');
+        }
+
+        // Domain-specific deleted/out-of-stock check
+        // "없는 상품입니다" or "판매중지된 상품입니다" alert might be in the html
+        if (html.includes('없는 상품입니다') || html.includes('판매중지된') || html.includes('location.replace')) {
+            // A common pattern is `<script>alert('...'); history.back();</script>`
+            if (html.includes('alert(') && (html.includes('history.back') || html.includes('location.href'))) {
+                return { isOutOfStock: true };
+            }
+        }
+
+        const $ = cheerio.load(html);
+
+        // Price check
+        let rawPrice = $('input[name="multi_discount_fifty"]').val() as string ||
+                       $('.optionPrice').first().text().trim();
+                       
+        if (!rawPrice) {
+            const priceMatch = html.match(/var\s+productPrice\s*=\s*['"]([^'"]+)['"]/);
+            if (priceMatch) rawPrice = priceMatch[1].trim();
+        }
+        
+        let salePrice = 0;
+        if (rawPrice) {
+             salePrice = parseInt(rawPrice.replace(/[^0-9]/g, ''), 10);
+        }
+
+        // If we still can't find a price and there is no product name, it might be out of stock
+        const name = $('.pl_name h2').first().text().trim() || $('.pl_name h3').first().text().trim();
+        if (!name && salePrice === 0) {
+             return { isOutOfStock: true };
+        }
+
+        return {
+             isOutOfStock: false,
+             currentPrice: salePrice
+        };
+
+    } catch (error: any) {
+        // Axios throws an error for 404 statuses
+        if (error.response && error.response.status === 404) {
+             return { isOutOfStock: true };
+        }
+        return { isOutOfStock: false, error: error?.message || String(error) };
+    }
+}
+

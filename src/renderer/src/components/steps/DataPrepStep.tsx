@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 export type ScrapeMethod = 'product' | 'category' | 'search';
 
 interface DataPrepStepProps {
@@ -27,6 +27,37 @@ export const DataPrepStep: React.FC<DataPrepStepProps> = ({
     handleCancelScrape
 }) => {
     const [activeTab, setActiveTab] = useState<'manual' | 'auto'>('manual');
+    const [wholesaleSource, setWholesaleSource] = useState<string>('dometopia');
+    const [dometopiaSession, setDometopiaSession] = useState<string | null>(null);
+    const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+    useEffect(() => {
+        // Check initial session status
+        window.electron.ipcRenderer.invoke('get-dometopia-session').then(res => {
+            if (res.success && res.cookie) {
+                setDometopiaSession(res.cookie);
+            }
+        });
+    }, []);
+
+    const handleDometopiaLogin = async () => {
+        setIsLoggingIn(true);
+        try {
+            const res = await window.electron.ipcRenderer.invoke('dometopia-login');
+            if (res.success && res.cookie) {
+                setDometopiaSession(res.cookie);
+                alert('도매토피아 연동이 완료되었습니다! 이제 회원가 및 설정된 할인가로 수집됩니다.');
+            } else if (res.error) {
+                // Ignore if user just closed the window intentionally
+                console.log(res.error);
+            }
+        } catch (error) {
+            console.error('Login error:', error);
+            alert('로그인 처리 중 오류가 발생했습니다.');
+        } finally {
+            setIsLoggingIn(false);
+        }
+    };
 
     // 카테고리 검색기 전용 상태
     const [catSearchKeyword, setCatSearchKeyword] = useState('');
@@ -63,6 +94,12 @@ export const DataPrepStep: React.FC<DataPrepStepProps> = ({
     };
 
     const getPlaceholder = () => {
+        const sourceName = wholesaleSource === 'dometopia' ? '도매토피아' :
+            wholesaleSource === 'ownerclan' ? '오너클랜' :
+                wholesaleSource === 'domeme' ? '도매매' : '도매찜';
+
+        if (wholesaleSource !== 'dometopia') return `${sourceName} 연동은 준비 중입니다...`;
+
         if (scrapeMethod === 'product') return "도매토피아 상품번호 입력 (여러 개일 경우 줄바꿈으로 구분)";
         if (scrapeMethod === 'category') return "도매토피아 카테고리 코드 (예: 0177)";
         return "도매토피아 검색어 (예: 텀블러)";
@@ -116,6 +153,38 @@ export const DataPrepStep: React.FC<DataPrepStepProps> = ({
                 pointerEvents: sheetId ? 'auto' : 'none',
                 transition: 'opacity 0.3s ease'
             }}>
+                {/* Wholesale Source Selector */}
+                <div style={{ marginBottom: '24px' }}>
+                    <label style={{ display: 'block', marginBottom: '8px', color: '#64748b', fontSize: '13px', fontWeight: 600 }}>수집 소스 (도매처) 선택</label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                        {[
+                            { id: 'dometopia', label: '도매토피아' },
+                            { id: 'ownerclan', label: '오너클랜' },
+                            { id: 'domeme', label: '도매매' },
+                            { id: 'domezim', label: '도매찜' }
+                        ].map(s => (
+                            <button
+                                key={s.id}
+                                onClick={() => setWholesaleSource(s.id)}
+                                style={{
+                                    flex: 1,
+                                    padding: '12px',
+                                    borderRadius: '8px',
+                                    border: wholesaleSource === s.id ? '2px solid #3b82f6' : '1px solid #e2e8f0',
+                                    backgroundColor: wholesaleSource === s.id ? '#eff6ff' : 'white',
+                                    color: wholesaleSource === s.id ? '#1d4ed8' : '#64748b',
+                                    fontWeight: wholesaleSource === s.id ? 600 : 500,
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s',
+                                    boxShadow: wholesaleSource === s.id ? '0 2px 4px rgba(59, 130, 246, 0.1)' : 'none'
+                                }}
+                            >
+                                {s.label}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
                 {/* Tab Navigation */}
                 <div style={{ display: 'flex', gap: '8px', marginBottom: '24px' }}>
                     <button
@@ -246,6 +315,39 @@ export const DataPrepStep: React.FC<DataPrepStepProps> = ({
                             <p style={{ color: '#94a3b8', marginBottom: '24px', fontSize: '14px', lineHeight: '1.6' }}>
                                 도매처의 상품 데이터(상품명, 가격, 이미지, 상세설명)를 즉시 스크래핑하여 엑셀 양식에 맞춰 자동으로 채워 넣습니다.
                             </p>
+
+                            {/* 도매토피아 로그인 상태 패널 */}
+                            <div style={{
+                                marginBottom: '24px',
+                                padding: '16px 20px',
+                                backgroundColor: dometopiaSession ? 'rgba(16, 185, 129, 0.08)' : 'var(--color-surface-elevated)',
+                                border: '1px solid',
+                                borderColor: dometopiaSession ? 'rgba(16, 185, 129, 0.2)' : 'var(--color-border)',
+                                borderRadius: '12px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between'
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                    <div style={{ fontSize: '24px' }}>{dometopiaSession ? '🟢' : '🔴'}</div>
+                                    <div>
+                                        <div style={{ fontWeight: 600, color: dometopiaSession ? '#34d399' : '#f8fafc', marginBottom: '4px' }}>
+                                            {dometopiaSession ? '로그인 완료 (도매가 수집 중)' : '로그아웃 상태 (소비자가격 수집 중)'}
+                                        </div>
+                                        <div style={{ fontSize: '13px', color: '#94a3b8' }}>
+                                            {dometopiaSession ? '실제 도매 회원가 및 할인율이 반영되어 정확하게 수집됩니다.' : '로그인하지 않으면 비정상적인 가격(소비자가)이 연동될 수 있습니다.'}
+                                        </div>
+                                    </div>
+                                </div>
+                                <button
+                                    className={dometopiaSession ? "secondary" : "primary"}
+                                    onClick={handleDometopiaLogin}
+                                    disabled={isLoggingIn}
+                                    style={{ padding: '8px 16px', fontSize: '14px', whiteSpace: 'nowrap' }}
+                                >
+                                    {isLoggingIn ? '연결 중...' : (dometopiaSession ? '🔄 계정 재연동' : '🔑 계정 연동하기')}
+                                </button>
+                            </div>
 
                             <div style={{ display: 'flex', gap: '20px', marginBottom: '20px', padding: '16px', background: 'var(--color-surface-0)', borderRadius: '12px', border: '1px solid var(--color-border)' }}>
                                 <label style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#f8fafc', cursor: 'pointer', fontWeight: 500 }}>

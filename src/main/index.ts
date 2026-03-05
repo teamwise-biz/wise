@@ -1,11 +1,14 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron';
+import { app, shell, BrowserWindow, ipcMain, session } from 'electron';
 import { join } from 'path'
 import icon from '../../resources/icon.png?asset'
 import { authorize } from './auth';
 import { createSpreadsheet, writeToSheet, readFromSheet, updateSheetCell, getOrCreateMasterSheet, appendToMasterSheet } from './sheets';
-import { fetchSmartStoreOrders, registerSmartStoreProduct, updateSmartStoreProduct, uploadImageToNaverFromUrl, searchSmartStoreCategories, fetchSmartstoreProductStatus, updateSmartstoreProductStatus, deleteSmartstoreProduct } from './smartstore';
-import { scrapeDometopiaProduct, scrapeCategoryLinks } from './scraper';
+import { fetchSmartStoreOrders, registerSmartStoreProduct, updateSmartStoreProduct, uploadImageToNaverFromUrl, searchSmartStoreCategories, fetchSmartstoreProductStatus, updateSmartstoreProductStatus, deleteSmartstoreProduct, updateSmartStorePrice } from './smartstore';
+import { scrapeDometopiaProduct, scrapeCategoryLinks, checkDometopiaStatus } from './scraper';
 import { getCategoryRules, saveCategoryRule, deleteCategoryRule, findRuleByUrl, CategoryRule } from './db';
+
+// Dometopia Session Cookie Storage
+let dometopiaSessionCookie: string | null = null;
 
 function createWindow(): void {
   // Create the browser window.
@@ -99,16 +102,67 @@ app.whenReady().then(() => {
 
   ipcMain.handle('scrape-dometopia', async (_: any, htmlContent: string) => {
     try {
-      const productInfo = await scrapeDometopiaProduct(htmlContent);
+      const productInfo = await scrapeDometopiaProduct(htmlContent, dometopiaSessionCookie);
       return productInfo;
     } catch (error: any) {
       return { success: false, error: error.message };
     }
   });
 
+  ipcMain.handle('dometopia-login', async () => {
+    return new Promise((resolve) => {
+      const loginWin = new BrowserWindow({
+        width: 600,
+        height: 750,
+        title: '도매토피아 로그인',
+        modal: true,
+        parent: BrowserWindow.getAllWindows()[0],
+        webPreferences: {
+          nodeIntegration: false,
+          contextIsolation: true
+        }
+      });
+
+      // Clear existing session data before logging in to ensure a fresh state
+      session.defaultSession.cookies.get({ url: 'https://dometopia.com' }).then((cookies) => {
+        cookies.forEach(cookie => {
+          session.defaultSession.cookies.remove('https://dometopia.com', cookie.name);
+        });
+      });
+
+      loginWin.loadURL('https://dometopia.com/member/login');
+
+      // Intercept redirects or navigation to check if login is successful
+      loginWin.webContents.on('did-navigate', async (_event, url) => {
+        // Typically, successful login redirects to main page or a specific return URL
+        if (url === 'https://dometopia.com/' || url === 'https://dometopia.com/main/index' || url.includes('main/index')) {
+          const cookies = await session.defaultSession.cookies.get({ url: 'https://dometopia.com' });
+          const phpSessId = cookies.find(c => c.name === 'PHPSESSID');
+          
+          if (phpSessId) {
+            dometopiaSessionCookie = `PHPSESSID=${phpSessId.value}`;
+            loginWin.close();
+            resolve({ success: true, cookie: dometopiaSessionCookie });
+          }
+        }
+      });
+
+      loginWin.on('closed', () => {
+        // If user closes window without successfully logging in
+        if (!dometopiaSessionCookie) {
+           resolve({ success: false, error: 'User closed the login window without logging in.' });
+        }
+      });
+    });
+  });
+
+  ipcMain.handle('get-dometopia-session', () => {
+     return { success: true, cookie: dometopiaSessionCookie };
+  });
+
   ipcMain.handle('scrape-category', async (_: any, url: string) => {
     try {
-      const result = await scrapeCategoryLinks(url);
+      const result = await scrapeCategoryLinks(url, dometopiaSessionCookie);
       return result;
     } catch (error: any) {
       return { success: false, error: error.message };
@@ -229,6 +283,24 @@ app.whenReady().then(() => {
       try {
           const result = await deleteSmartstoreProduct(credentials, channelProductNo);
           return { success: true, result };
+      } catch (error: any) {
+          return { success: false, error: error.message };
+      }
+  });
+
+  ipcMain.handle('update-smartstore-price', async (_, { credentials, channelProductNo, newPrice }: { credentials: { clientId: string, clientSecret: string }, channelProductNo: string, newPrice: number }) => {
+      try {
+          const result = await updateSmartStorePrice(credentials, channelProductNo, newPrice);
+          return { success: true, result };
+      } catch (error: any) {
+          return { success: false, error: error.message };
+      }
+  });
+
+  ipcMain.handle('check-dometopia-status', async (_, itemCode: string) => {
+      try {
+          const result = await checkDometopiaStatus(itemCode, dometopiaSessionCookie);
+          return { success: true, ...result };
       } catch (error: any) {
           return { success: false, error: error.message };
       }
