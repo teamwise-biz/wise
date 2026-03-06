@@ -15,9 +15,22 @@ export const SyncStepMaster: React.FC<SyncStepProps> = ({ masterSheetId }) => {
     const [extraShippingCost, setExtraShippingCost] = useState(3000);
     const [activeTab, setActiveTab] = useState<'statusSync' | 'monitorSync'>('statusSync');
 
+    // Multi-Market Selection States
+    const [targetMarkets, setTargetMarkets] = useState<{ [key: string]: boolean }>({
+        naver: true,
+        cafe24: false,
+        coupang: false,
+        elevenst: false
+    });
+
     const [credentials, setCredentials] = useState({
         clientId: localStorage.getItem('naverClientId') || '',
         clientSecret: localStorage.getItem('naverClientSecret') || ''
+    });
+
+    const [cafe24Credentials, setCafe24Credentials] = useState({
+        mallId: localStorage.getItem('cafe24MallId') || '',
+        connected: false // Will poll or set via IPC in advanced implementation
     });
 
     const addLog = (msg: string) => {
@@ -33,13 +46,32 @@ export const SyncStepMaster: React.FC<SyncStepProps> = ({ masterSheetId }) => {
         });
     };
 
+    const handleCafe24CredentialsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const { name, value } = e.target;
+        setCafe24Credentials(prev => {
+            const newCreds = { ...prev, [name]: value };
+            if (name === 'mallId') localStorage.setItem('cafe24MallId', value);
+            return newCreds;
+        });
+    };
+
     const handleSync = async () => {
         if (!masterSheetId) {
             alert('마스터 DB 시트가 연결되지 않았습니다. 앱을 재접속(구글 인증) 해주세요.');
             return;
         }
-        if (!credentials.clientId || !credentials.clientSecret) {
+        if (targetMarkets.naver && (!credentials.clientId || !credentials.clientSecret)) {
             alert('네이버 커머스 API 인증 정보(Client ID, Secret)를 기입해주세요.');
+            return;
+        }
+        if (targetMarkets.cafe24 && !cafe24Credentials.mallId) {
+            alert('카페24 쇼핑몰 아이디(Mall ID)를 기입해주세요.');
+            return;
+        }
+
+        const selectedMarkets = Object.keys(targetMarkets).filter(k => targetMarkets[k]);
+        if (selectedMarkets.length === 0) {
+            alert('최소 1개 이상의 타겟 마켓을 선택해주세요.');
             return;
         }
 
@@ -185,8 +217,14 @@ export const SyncStepMaster: React.FC<SyncStepProps> = ({ masterSheetId }) => {
             alert('마스터 DB 시트가 연결되지 않았습니다.');
             return;
         }
-        if (!credentials.clientId || !credentials.clientSecret) {
+        if (targetMarkets.naver && (!credentials.clientId || !credentials.clientSecret)) {
             alert('네이버 커머스 API 인증 정보를 입력하세요.');
+            return;
+        }
+
+        const selectedMarkets = Object.keys(targetMarkets).filter(k => targetMarkets[k]);
+        if (selectedMarkets.length === 0) {
+            alert('최소 1개 이상의 타겟 마켓을 선택해주세요.');
             return;
         }
 
@@ -384,6 +422,35 @@ export const SyncStepMaster: React.FC<SyncStepProps> = ({ masterSheetId }) => {
                     </div>
                 )}
 
+                {/* 1:N Multi-Market Target Selection */}
+                <div style={{ marginBottom: '24px', padding: '16px', background: 'var(--color-surface-elevated)', borderRadius: '8px', border: '1px solid var(--color-border)' }}>
+                    <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '12px', color: '#f8fafc' }}>전송할 타겟 마켓 선택 (1:N 다중 배포)</h3>
+                    <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                        {[
+                            { id: 'naver', label: '네이버 스마트스토어', color: '#03C75A' },
+                            { id: 'cafe24', label: '카페24 (Cafe24)', color: '#000000' },
+                            { id: 'coupang', label: '쿠팡 (연동예정)', color: '#cb1400', disabled: true },
+                            { id: 'elevenst', label: '11번가 (연동예정)', color: '#FF0000', disabled: true }
+                        ].map(market => (
+                            <label key={market.id} style={{
+                                display: 'flex', alignItems: 'center', gap: '8px', cursor: market.disabled ? 'not-allowed' : 'pointer',
+                                opacity: market.disabled ? 0.5 : 1, padding: '8px 12px', borderRadius: '6px',
+                                border: targetMarkets[market.id] ? `1px solid ${market.color}` : '1px solid var(--color-border)',
+                                background: targetMarkets[market.id] ? `${market.color}15` : 'transparent'
+                            }}>
+                                <input
+                                    type="checkbox"
+                                    checked={targetMarkets[market.id] || false}
+                                    onChange={(e) => setTargetMarkets(prev => ({ ...prev, [market.id]: e.target.checked }))}
+                                    disabled={market.disabled}
+                                    style={{ accentColor: market.color, width: '16px', height: '16px' }}
+                                />
+                                <span style={{ fontSize: '14px', fontWeight: 500, color: '#e2e8f0' }}>{market.label}</span>
+                            </label>
+                        ))}
+                    </div>
+                </div>
+
                 <div style={{ marginBottom: '24px' }}>
                     <h3 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '12px' }}>네이버 커머스 API 인증 (조회/수정용)</h3>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
@@ -410,6 +477,41 @@ export const SyncStepMaster: React.FC<SyncStepProps> = ({ masterSheetId }) => {
                     </div>
                 </div>
 
+                {targetMarkets.cafe24 && (
+                    <div style={{ marginBottom: '24px', padding: '16px', border: '1px solid var(--color-border)', borderRadius: '8px', background: 'rgba(0,0,0,0.1)' }}>
+                        <h3 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '12px' }}>카페24 원클릭 연동 (SaaS)</h3>
+                        <p style={{ fontSize: '13px', color: '#94a3b8', marginBottom: '16px' }}>쇼핑몰 아이디만 입력하고 [연동하기] 버튼을 눌러 권한을 허용해주세요.</p>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px', marginBottom: '16px' }}>
+                            <div className="input-group">
+                                <input
+                                    type="text"
+                                    name="mallId"
+                                    value={cafe24Credentials.mallId}
+                                    onChange={handleCafe24CredentialsChange}
+                                    placeholder="Cafe24 Mall ID (예: dometopia)"
+                                    style={{ width: '100%' }}
+                                />
+                            </div>
+                        </div>
+                        <button
+                            className="secondary"
+                            style={{ width: '100%', padding: '12px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}
+                            onClick={() => {
+                                if (!cafe24Credentials.mallId) {
+                                    alert('먼저 카페24 쇼핑몰 아이디를 입력해주세요.');
+                                    return;
+                                }
+                                const clientId = 'hxHOk08wCdCv4QSzDL0JpA'; // WISE 통합 앱 Client ID
+                                const redirectUri = 'http://localhost:3000/api/market/cafe24/callback';
+                                const authUrl = `https://${cafe24Credentials.mallId}.cafe24api.com/api/v2/oauth/authorize?response_type=code&client_id=${clientId}&state=desktop&redirect_uri=${redirectUri}&scope=mall.read_product,mall.write_product,mall.read_category`;
+                                window.electron.ipcRenderer.send('open-external-window', authUrl);
+                            }}
+                        >
+                            🔗 1초만에 쇼핑몰 연동하기
+                        </button>
+                    </div>
+                )}
+
                 <button
                     className={activeTab === 'statusSync' ? 'primary' : 'success'}
                     onClick={activeTab === 'statusSync' ? handleSync : handleMonitorSync}
@@ -430,33 +532,35 @@ export const SyncStepMaster: React.FC<SyncStepProps> = ({ masterSheetId }) => {
             </div>
 
             {/* Sync Progress & Logs */}
-            {syncLogs.length > 0 && (
-                <div className="glass-panel" style={{ background: '#1e293b' }}>
-                    <div style={{ padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.1)', fontWeight: 600, fontSize: '14px', color: '#94a3b8' }}>
-                        상호 대조 작업 로그
+            {
+                syncLogs.length > 0 && (
+                    <div className="glass-panel" style={{ background: '#1e293b' }}>
+                        <div style={{ padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.1)', fontWeight: 600, fontSize: '14px', color: '#94a3b8' }}>
+                            상호 대조 작업 로그
+                        </div>
+                        <div
+                            className="custom-scrollbar"
+                            style={{ padding: '16px', maxHeight: '300px', overflowY: 'auto', fontSize: '13px', fontFamily: 'monospace', lineHeight: '1.6', color: '#cbd5e1' }}>
+                            {syncLogs.map((log, idx) => (
+                                <div key={idx} style={{
+                                    marginBottom: '4px',
+                                    color: log.includes('✅') ? '#4ade80' :
+                                        log.includes('❌') ? '#ef4444' :
+                                            log.includes('⚠️') ? '#facc15' :
+                                                log.includes('🗑️') ? '#f87171' : 'inherit'
+                                }}>
+                                    {log}
+                                </div>
+                            ))}
+                        </div>
                     </div>
-                    <div
-                        className="custom-scrollbar"
-                        style={{ padding: '16px', maxHeight: '300px', overflowY: 'auto', fontSize: '13px', fontFamily: 'monospace', lineHeight: '1.6', color: '#cbd5e1' }}>
-                        {syncLogs.map((log, idx) => (
-                            <div key={idx} style={{
-                                marginBottom: '4px',
-                                color: log.includes('✅') ? '#4ade80' :
-                                    log.includes('❌') ? '#ef4444' :
-                                        log.includes('⚠️') ? '#facc15' :
-                                            log.includes('🗑️') ? '#f87171' : 'inherit'
-                            }}>
-                                {log}
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
+                )
+            }
             <style>{`
                 @keyframes spin {
                     to { transform: rotate(360deg); }
                 }
             `}</style>
-        </div>
+        </div >
     );
 };

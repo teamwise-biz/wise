@@ -29,6 +29,7 @@ export const MarketSyncStep: React.FC<MarketSyncStepProps> = ({
 
     const targetMarkets = [
         { id: 'smartstore', label: '네이버 스마트스토어', ready: true },
+        { id: 'cafe24', label: '카페24 (Cafe24)', ready: true },
         { id: 'coupang', label: '쿠팡', ready: false },
         { id: '11st', label: '11번가', ready: false },
         { id: 'gmarket', label: 'G마켓', ready: false },

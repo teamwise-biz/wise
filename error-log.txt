@@ -1,0 +1,1 @@
+[SmartStore API 에러] 상품 등록 실패: {"code":"BAD_REQUEST","message":"입력한 데이터가 유효하지 않습니다.","invalidInputs":[{"name":"originProduct.detailAttribute.productCertificationInfos[0].companyName","type":"Exist","message":"인증상호 항목은 설정하실 수 없습니다."}],"timestamp":"2026-03-05T15:11:12.881+09:00"}

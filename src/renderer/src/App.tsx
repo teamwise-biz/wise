@@ -3,6 +3,7 @@ import { useState, useRef } from 'react'
 import { ActionLogs } from './components/ActionLogs';
 import { DataPrepStep, ScrapeMethod } from './components/steps/DataPrepStep';
 import { MarketSyncStep } from './components/steps/MarketSyncStep';
+import { SyncStepMaster } from './components/steps/SyncStepMaster';
 import { Sidebar, ViewType } from './components/Sidebar';
 
 type SyncStatus = 'pending' | 'syncing' | 'success' | 'failed'
@@ -10,6 +11,8 @@ type SyncStatus = 'pending' | 'syncing' | 'success' | 'failed'
 
 function App(): React.JSX.Element {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [licenseTier, setLicenseTier] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([])
   const [sheetId, setSheetId] = useState<string | null>(null)
   const [sheetData, setSheetData] = useState<string[][]>([])
@@ -29,6 +32,7 @@ function App(): React.JSX.Element {
 
 
   const [masterSheetId, setMasterSheetId] = useState<string>('');
+  const [syncMode, setSyncMode] = useState<'register' | 'master'>('register');
 
   const addLog = (message: string) => {
     setLogs((prev) => [...prev, message])
@@ -233,12 +237,21 @@ function App(): React.JSX.Element {
     cancelScrapeRef.current = true;
   }
 
+  const [isAuthenticating, setIsAuthenticating] = useState<boolean>(false);
+
   const handleAuth = async () => {
-    addLog('구글 계정 인증을 시작합니다...')
+    setIsAuthenticating(true);
+    addLog('Google 계정 연동 및 데스크톱 라이선스를 확인 중입니다...');
+
     try {
-      const response = await window.electron.ipcRenderer.invoke('google-auth')
-      if (response.success) {
-        addLog('구글 계정 인증에 성공했습니다!')
+      const googleRes = await window.electron.ipcRenderer.invoke('google-auth')
+      if (googleRes.success) {
+        addLog(`✅ 통합 인증 완료! (계정: ${googleRes.email})`)
+        setUserEmail(googleRes.email);
+        if (googleRes.tier) {
+          addLog(`✨ 적용 완료된 요금제: ${googleRes.tier.toUpperCase()}`)
+          setLicenseTier(googleRes.tier);
+        }
         setIsAuthenticated(true)
 
         // Phase 7: Fetch or create Master DB upon login
@@ -252,11 +265,31 @@ function App(): React.JSX.Element {
         }
 
       } else {
-        addLog(`인증 실패: ${response.error}`)
+        addLog(`❌ 인증 실패: ${googleRes.error}`)
+        alert(`로그인 실패\n${googleRes.error}`)
       }
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
-      addLog(`인증 중 오류 발생: ${msg}`)
+      addLog(`❌ 인증 중 오류 발생: ${msg}`)
+      alert(`오류 발생\n${msg}`)
+    } finally {
+      setIsAuthenticating(false);
+    }
+  }
+
+  const handleLogout = async () => {
+    try {
+      addLog('로그아웃을 진행합니다...');
+      await window.electron.ipcRenderer.invoke('google-logout');
+      setIsAuthenticated(false);
+      setUserEmail(null);
+      setLicenseTier(null);
+      setMasterSheetId('');
+      addLog('✅ 로그아웃 되었습니다.');
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      addLog(`❌ 로그아웃 중 오류 발생: ${msg}`);
+      alert(`로그아웃 실패\n${msg}`);
     }
   }
 
@@ -398,6 +431,15 @@ function App(): React.JSX.Element {
     const clientId = '4aTjpvduCQkMgmJjioSzFK';
     const clientSecret = '$2a$04$UNqs4AJrZASKpHqfUFGxOe';
 
+    const cafe24MallId = localStorage.getItem('cafe24MallId') || '';
+    const cafe24ClientId = localStorage.getItem('cafe24ClientId') || '';
+    const cafe24ClientSecret = localStorage.getItem('cafe24ClientSecret') || '';
+
+    if (targetMarkets.includes('cafe24') && (!cafe24MallId || !cafe24ClientId || !cafe24ClientSecret)) {
+      addLog('에러: 카페24 API 인증 정보가 누락되었습니다. 1:N 설정(스토어 로고 클릭)에서 기입해주세요.');
+      return;
+    }
+
     // Initialize statuses for all valid rows to pending
     const initialStatuses: { [rowIdx: number]: { status: SyncStatus, message: string } } = { ...syncStatuses };
     for (let i = startIndex; i < sheetData.length; i++) {
@@ -528,8 +570,56 @@ function App(): React.JSX.Element {
         }
       }
 
-      // [2] Additional Markets (Placeholders)
-      const otherMarkets = targetMarkets.filter(m => m !== 'smartstore');
+      // [2] Cafe24 Target
+      if (targetMarkets.includes('cafe24')) {
+        try {
+          addLog(`[카페24] ${i}번째 상품 전송 준비 중...`);
+          // Translate payloadRow (Dometopia data) into Cafe24's expected JSON
+          const cafe24Payload = {
+            shop_no: 1,
+            request: {
+              display_state: 'T',
+              selling_state: 'T',
+              product_name: payloadRow[1],
+              price: finalPrice,
+              retail_price: finalPrice,
+              supply_price: parseInt(payloadRow[2] || '0', 10),
+              summary_description: payloadRow[1],
+              simple_description: payloadRow[1],
+              description: payloadRow[5] || payloadRow[1],
+              detail_image: payloadRow[3],
+              custom_product_code: uniqueKey, // Our master DB ItemCode
+              origin_classification: 'T', // Domestic
+              origin_place_no: 494, // Placeholder for origin
+              has_option: (payloadRow[6] && payloadRow[7]) ? 'T' : 'F',
+              shipping_fee_type: 'T'
+            }
+          };
+
+          const cafe24Response = await window.electron.ipcRenderer.invoke('register-cafe24-product', {
+            mallId: cafe24MallId, clientId: cafe24ClientId, clientSecret: cafe24ClientSecret
+          }, cafe24Payload);
+
+          if (cafe24Response.success) {
+            marketLogMsgs.push('카페24(성공)');
+            addLog(`✅ ${i}번째 상품 카페24 [신규등록] 성공! (상품번호: ${cafe24Response.productNo})`);
+            // Phase 6.5: Sync Cafe24 Product ID to Google Sheets if possible.
+            // For now, logging guarantees success visibility. Future update will write back to sheet.
+          } else {
+            marketLogMsgs.push('카페24(오류)');
+            addLog(`❌ [카페24] ${i}번째 상품 전송 실패: ${cafe24Response.error}`);
+            allSuccess = false;
+          }
+        } catch (error: unknown) {
+          const msg = error instanceof Error ? error.message : String(error);
+          marketLogMsgs.push(`카페24(치명적오류)`);
+          addLog(`❌ [카페24] ${i}번째 상품 처리 중 에러: ${msg}`);
+          allSuccess = false;
+        }
+      }
+
+      // [3] Additional Markets (Placeholders)
+      const otherMarkets = targetMarkets.filter(m => m !== 'smartstore' && m !== 'cafe24');
       for (const m of otherMarkets) {
         marketLogMsgs.push(`${m}(준비중)`);
         allSuccess = false; // We didn't sync yet, mark as partially failed to get attention
@@ -615,9 +705,9 @@ function App(): React.JSX.Element {
           <div style={{ fontSize: '48px', marginBottom: '24px' }}>🔐</div>
           <h1 style={{ marginBottom: '16px', fontSize: '32px', fontWeight: 700, letterSpacing: '-0.5px' }}>WISE</h1>
           <p style={{ color: 'var(--color-text-dim)', marginBottom: '32px', fontSize: '15px', lineHeight: '1.6' }}>시스템 접근 권한 및 스프레드시트 연동을 위해<br />Google 계정으로 로그인해주세요.</p>
-          <button className="primary" onClick={handleAuth} style={{ width: '100%', padding: '16px', fontSize: '16px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', backgroundColor: '#ffffff', color: '#1e293b', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)' }}>
-            <svg viewBox="0 0 24 24" width="20" height="20" xmlns="http://www.w3.org/2000/svg"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" /><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" /><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" /><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" /></svg>
-            <span style={{ fontWeight: 600 }}>Google 계정으로 시작하기</span>
+          <button className="primary" onClick={handleAuth} disabled={isAuthenticating} style={{ width: '100%', padding: '16px', fontSize: '16px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', backgroundColor: isAuthenticating ? '#e2e8f0' : '#ffffff', color: isAuthenticating ? '#94a3b8' : '#1e293b', boxShadow: isAuthenticating ? 'none' : '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)', cursor: isAuthenticating ? 'not-allowed' : 'pointer' }}>
+            <svg viewBox="0 0 24 24" width="20" height="20" xmlns="http://www.w3.org/2000/svg" style={{ opacity: isAuthenticating ? 0.5 : 1 }}><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" /><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" /><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" /><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" /></svg>
+            <span style={{ fontWeight: 600 }}>{isAuthenticating ? '인증 진행 중...' : 'Google 계정으로 시작하기'}</span>
           </button>
         </div>
       </div>
@@ -636,7 +726,26 @@ function App(): React.JSX.Element {
             {currentView === 'ORDERS' && '주문 관리'}
             {currentView === 'SETTINGS' && '환경 설정'}
           </h2>
-          {masterSheetId && <span style={{ fontSize: '12px', color: '#718096', backgroundColor: '#edf2f7', padding: '4px 12px', borderRadius: '12px', fontWeight: 600 }}>마스터 DB 연결됨</span>}
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+            {masterSheetId && <span style={{ fontSize: '12px', color: '#718096', backgroundColor: '#edf2f7', padding: '4px 12px', borderRadius: '12px', fontWeight: 600 }}>마스터 DB 연결됨</span>}
+            {userEmail && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 14px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '20px', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
+                <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>{userEmail}</span>
+                {licenseTier && (
+                  <span style={{ fontSize: '11px', fontWeight: 700, color: '#ffffff', backgroundColor: licenseTier.includes('trial') ? '#f59e0b' : '#3b82f6', padding: '2px 8px', borderRadius: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    {licenseTier.replace('trial_14days', 'TRIAL').replace('pro', 'PRO')}
+                  </span>
+                )}
+                <button
+                  onClick={handleLogout}
+                  style={{ marginLeft: '4px', background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '18px', display: 'flex', alignItems: 'center', padding: '2px' }}
+                  title="로그아웃"
+                >
+                  <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         <div style={{ display: 'flex', gap: '24px', flex: 1, padding: '32px', overflow: 'hidden' }}>
@@ -657,18 +766,70 @@ function App(): React.JSX.Element {
             )}
 
             {currentView === 'SYNC' && (
-              <MarketSyncStep
-                sheetData={sheetData}
-                syncStatuses={syncStatuses}
-                handleReadProducts={handleReadProducts}
-                handleSyncProducts={handleSyncProducts}
-                handleFetchSmartStoreOrders={handleFetchSmartStoreOrders}
-                marginRate={marginRate}
-                setMarginRate={setMarginRate}
-                extraShippingCost={extraShippingCost}
-                setExtraShippingCost={setExtraShippingCost}
-                masterSheetId={masterSheetId!}
-              />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                <div style={{
+                  display: 'inline-flex',
+                  backgroundColor: 'rgba(226, 232, 240, 0.6)',
+                  padding: '6px',
+                  borderRadius: '12px',
+                  alignSelf: 'flex-start',
+                  marginBottom: '12px'
+                }}>
+                  <button
+                    onClick={() => setSyncMode('register')}
+                    style={{
+                      backgroundColor: syncMode === 'register' ? '#ffffff' : 'transparent',
+                      border: 'none',
+                      borderRadius: '8px',
+                      fontSize: '15px',
+                      fontWeight: syncMode === 'register' ? 700 : 600,
+                      color: syncMode === 'register' ? '#0f172a' : '#64748b',
+                      padding: '10px 24px',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease',
+                      boxShadow: syncMode === 'register' ? '0 2px 8px rgba(0, 0, 0, 0.08)' : 'none'
+                    }}
+                  >
+                    🚀 마켓 일괄 등록 (1:N 배포)
+                  </button>
+                  <button
+                    onClick={() => setSyncMode('master')}
+                    style={{
+                      backgroundColor: syncMode === 'master' ? '#ffffff' : 'transparent',
+                      border: 'none',
+                      borderRadius: '8px',
+                      fontSize: '15px',
+                      fontWeight: syncMode === 'master' ? 700 : 600,
+                      color: syncMode === 'master' ? '#0f172a' : '#64748b',
+                      padding: '10px 24px',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease',
+                      boxShadow: syncMode === 'master' ? '0 2px 8px rgba(0, 0, 0, 0.08)' : 'none'
+                    }}
+                  >
+                    🛡️ 마스터 DB 동기화 및 모니터링
+                  </button>
+                </div>
+
+                {syncMode === 'register' && (
+                  <MarketSyncStep
+                    sheetData={sheetData}
+                    syncStatuses={syncStatuses}
+                    handleReadProducts={handleReadProducts}
+                    handleSyncProducts={handleSyncProducts}
+                    handleFetchSmartStoreOrders={handleFetchSmartStoreOrders}
+                    marginRate={marginRate}
+                    setMarginRate={setMarginRate}
+                    extraShippingCost={extraShippingCost}
+                    setExtraShippingCost={setExtraShippingCost}
+                    masterSheetId={masterSheetId!}
+                  />
+                )}
+
+                {syncMode === 'master' && (
+                  <SyncStepMaster masterSheetId={masterSheetId!} />
+                )}
+              </div>
             )}
 
             {currentView === 'ORDERS' && (

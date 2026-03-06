@@ -163,7 +163,7 @@ async function fetchSmartStoreOrderDetails(token: string, productOrderIds: strin
     }
 }
 
-function getProductInfoProvidedNotice(categoryId: string, material: string, manufacturer: string, asPhoneNumber: string) {
+function getProductInfoProvidedNotice(manufacturer: string, asPhoneNumber: string) {
     // 향후 카테고리 ID 매핑을 고도화하여 의류(WEAR), 식품(FOOD) 등으로 세분화 가능
     // 현재는 안전장치로서 ETC(기타)를 유지하되, 파싱한 상세 정보를 꼼꼼히 매핑하여 제재를 피함
     return {
@@ -246,7 +246,6 @@ export async function registerSmartStoreProduct(credentials: SmartStoreCredentia
     // --- New Metadata Logic ---
     const manufacturerName = productData[12] || "자체제작";
     const originName = productData[13] || "아시아/중국";
-    const material = productData[14] || "";
     const modelName = productData[15] || "";
     const kcCertification = productData[16] || "";
 
@@ -279,7 +278,7 @@ export async function registerSmartStoreProduct(credentials: SmartStoreCredentia
         }
     }
 
-    const productInfoProvidedNotice = getProductInfoProvidedNotice(categoryId, material, manufacturerName, asPhoneNumber);
+    const productInfoProvidedNotice = getProductInfoProvidedNotice(manufacturerName, asPhoneNumber);
 
     const productPayload = {
         "originProduct": {
@@ -405,7 +404,6 @@ export async function updateSmartStoreProduct(credentials: SmartStoreCredentials
     // --- New Metadata Logic ---
     const manufacturerName = productData[12] || "자체제작";
     const originName = productData[13] || "아시아/중국";
-    const material = productData[14] || "";
     const modelName = productData[15] || "";
     const kcCertification = productData[16] || "";
 
@@ -460,7 +458,7 @@ export async function updateSmartStoreProduct(credentials: SmartStoreCredentials
 
     // 상품 수정용 PUT 페이로드
     
-    const productInfoProvidedNotice = getProductInfoProvidedNotice(existingLeafCategoryId, material, manufacturerName, asPhoneNumber);
+    const productInfoProvidedNotice = getProductInfoProvidedNotice(manufacturerName, asPhoneNumber);
 
     const productPayload = {
         "originProduct": {
@@ -610,7 +608,7 @@ export async function searchSmartStoreCategories(credentials: SmartStoreCredenti
     if (!cachedCategories) {
         try {
             const token = await getSmartStoreToken(credentials);
-            const response = await axios.get('https://api.commerce.naver.com/external/v1/categories', {
+            const response = await axios.get('https://api.commerce.naver.com/external/v1/standard-categories', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             cachedCategories = response.data || [];

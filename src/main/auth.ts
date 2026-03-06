@@ -27,10 +27,11 @@ export async function authorize(): Promise<Auth.OAuth2Client> {
     );
 
     try {
-        const token = fs.readFileSync(tokenPath, 'utf-8');
-        oAuth2Client.setCredentials(JSON.parse(token));
+        const tokenStr = fs.readFileSync(tokenPath, 'utf-8');
+        const token = JSON.parse(tokenStr);
+        oAuth2Client.setCredentials(token);
         return oAuth2Client;
-    } catch (err) {
+    } catch (error) {
         return await getNewToken(oAuth2Client);
     }
 }
@@ -41,7 +42,9 @@ function getNewToken(oAuth2Client: Auth.OAuth2Client): Promise<Auth.OAuth2Client
             access_type: 'offline',
             scope: [
                 'https://www.googleapis.com/auth/spreadsheets',
-                'https://www.googleapis.com/auth/drive.file'
+                'https://www.googleapis.com/auth/drive.file',
+                'https://www.googleapis.com/auth/userinfo.email',
+                'https://www.googleapis.com/auth/userinfo.profile'
             ],
         });
 
@@ -88,4 +91,13 @@ function getNewToken(oAuth2Client: Auth.OAuth2Client): Promise<Auth.OAuth2Client
             reject(new Error('Auth window was closed by user'));
         });
     });
+}
+
+export function logout(): boolean {
+    const tokenPath = getTokenPath();
+    if (fs.existsSync(tokenPath)) {
+        fs.unlinkSync(tokenPath);
+        return true;
+    }
+    return false;
 }

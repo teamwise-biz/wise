@@ -11,6 +11,7 @@ declare global {
         invoke(channel: 'fetch-smartstore-product-status', data: { credentials: any; channelProductNo: string }): Promise<{ success: boolean; status?: string; error?: string }>;
         invoke(channel: 'update-smartstore-status', data: { credentials: any; channelProductNo: string; statusType: string }): Promise<{ success: boolean; result?: boolean; error?: string }>;
         invoke(channel: 'delete-smartstore-product', data: { credentials: any; channelProductNo: string }): Promise<{ success: boolean; result?: boolean; error?: string }>;
+        invoke(channel: 'supabase-auth'): Promise<{ success: boolean; email?: string; error?: string }>;
         invoke(channel: 'scrape-category', url: string): Promise<{ success: boolean; links?: string[]; error?: string }>;
         invoke(channel: string, ...args: any[]): Promise<any>;
       }

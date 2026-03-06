@@ -1,11 +1,13 @@
 import { app, shell, BrowserWindow, ipcMain, session } from 'electron';
 import { join } from 'path'
 import icon from '../../resources/icon.png?asset'
-import { authorize } from './auth';
+import { authorize, logout } from './auth';
 import { createSpreadsheet, writeToSheet, readFromSheet, updateSheetCell, getOrCreateMasterSheet, appendToMasterSheet } from './sheets';
 import { fetchSmartStoreOrders, registerSmartStoreProduct, updateSmartStoreProduct, uploadImageToNaverFromUrl, searchSmartStoreCategories, fetchSmartstoreProductStatus, updateSmartstoreProductStatus, deleteSmartstoreProduct, updateSmartStorePrice } from './smartstore';
+import { createCafe24Product, updateCafe24Product, deleteCafe24Product, Cafe24ProductPayload } from './cafe24';
 import { scrapeDometopiaProduct, scrapeCategoryLinks, checkDometopiaStatus } from './scraper';
 import { getCategoryRules, saveCategoryRule, deleteCategoryRule, findRuleByUrl, CategoryRule } from './db';
+import { requireLogin, checkLicense } from './supabase';
 
 // Dometopia Session Cookie Storage
 let dometopiaSessionCookie: string | null = null;
@@ -95,6 +97,20 @@ app.whenReady().then(() => {
     try {
       await shell.openExternal(url);
       return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('supabase-auth', async () => {
+    try {
+      const user = await requireLogin();
+      const hasLicense = await checkLicense(user.user_id);
+      
+      if (!hasLicense) {
+        return { success: false, error: '유효한 라이선스(Pro 또는 무료 체험)가 없습니다. 웹사이트에서 요금제를 먼저 결제해주세요.' };
+      }
+      return { success: true, email: user.email };
     } catch (error: any) {
       return { success: false, error: error.message };
     }
@@ -205,11 +221,82 @@ app.whenReady().then(() => {
     }
   });
 
+  ipcMain.on('open-external-window', (_: unknown, url: string) => {
+    shell.openExternal(url);
+  });
+
+  ipcMain.on('open-external-window', (_: unknown, url: string) => {
+    shell.openExternal(url);
+  });
+
+  // Cafe24 Handlers
+  ipcMain.handle('register-cafe24-product', async (_: unknown, credentials: any, payload: Cafe24ProductPayload) => {
+    try {
+      const result = await createCafe24Product(credentials.mallId, payload);
+      return result;
+    } catch (error: unknown) {
+      const err = error as any;
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('update-cafe24-product', async (_: unknown, credentials: any, productNo: number, payload: Partial<Cafe24ProductPayload>) => {
+    try {
+      const result = await updateCafe24Product(credentials.mallId, productNo, payload);
+      return result;
+    } catch (error: unknown) {
+      const err = error as any;
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('delete-cafe24-product', async (_: unknown, credentials: any, productNo: number) => {
+    try {
+      const result = await deleteCafe24Product(credentials.mallId, productNo);
+      return result;
+    } catch (error: unknown) {
+      const err = error as any;
+      return { success: false, error: err.message };
+    }
+  });
+
   ipcMain.handle('google-auth', async () => {
     try {
-      await authorize();
-      return { success: true };
+      const authClient = await authorize();
+      
+      const accessToken = authClient.credentials.access_token;
+      if (!accessToken) {
+         throw new Error('Google 서버와의 연결이 원활하지 않습니다.\n앱을 껐다가 다시 실행해 주세요.');
+      }
+
+      // 1-Click License Check against the Next.js unified endpoint
+      const apiUrl = app.isPackaged ? 'https://wise-web.vercel.app/api/verify-license' : 'http://localhost:3000/api/verify-license';
+      
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accessToken })
+      });
+
+      const result = await response.json();
+      
+      if (!result.success) {
+        throw new Error(result.error || '라이선스 확인 실패');
+      }
+
+      return { success: true, email: result.email, tier: result.tier };
     } catch (error: any) {
+      console.error('### GOOGLE AUTH CRASH ###', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('google-logout', async () => {
+    try {
+      const result = logout();
+      return { success: true, loggedOut: result };
+    } catch (error: any) {
+      console.error('### GOOGLE LOGOUT CRASH ###', error);
       return { success: false, error: error.message };
     }
   });
